@@ -1686,84 +1686,158 @@ async function deleteRec(id){
 async function payRec(id){
   const r=D.recurring.find(x=>x.id===id);if(!r)return;
   const c=r.currency||cur();
-  // Check if there's a reserved fund
-  const res=(D.savingsReserved||[]).find(x=>x.recurringId===id&&x.month===cm());
   const fundAmt=r.fund||0;
+  const allRes=(D.savingsReserved||[]).filter(x=>x.recurringId===id);
 
-  if(fundAmt>=r.amount){
-    // Full fund covers it — pay complete amount
-    const accountId=res?.accountId||D.accounts[0]?.id||'';
-    if(res){D.savingsReserved=(D.savingsReserved||[]).filter(x=>x.id!==res.id);await fsDel('savingsReserved',res.id)}
-    const tx={id:uid(),type:'expense',amount:r.amount,currency:c,category:r.category,description:r.name,date:today(),accountId};
-    D.transactions.push(tx);await fsSave('transactions',tx);
-    r.paidThisMonth=true;r.fund=0;await fsSave('recurring',r);
-    toast('¡Pago registrado! ✅');renderAll();
-    return;
-  }
-
-  // Fund is incomplete or zero
   if(fundAmt<=0){
     toast('No hay fondo apartado. Usa "+ Fondo" para abonar primero, o registra el gasto manualmente desde Transacciones.','e');
     return;
   }
 
-  // Partial fund: only charge what's actually reserved, leave the rest pending
-  const missing=r.amount-fundAmt;
-  const ok=await confirm2(
-    '⚠️ Fondo incompleto',
-    `Solo hay ${fmt(fundAmt,c)} apartados de los ${fmt(r.amount,c)} del gasto. Se registrará un pago parcial de ${fmt(fundAmt,c)} y quedarán pendientes ${fmt(missing,c)}. ¿Continuar?`
-  );
-  if(!ok)return;
+  const maxInstallments=Math.floor(fundAmt/r.amount);
+  const remainderAfterMax=fundAmt-(maxInstallments*r.amount);
+  const pctToNext=r.amount>0?Math.round((remainderAfterMax/r.amount)*100):0;
 
-  const accountId=res.accountId;
-  if(res){D.savingsReserved=(D.savingsReserved||[]).filter(x=>x.id!==res.id);await fsDel('savingsReserved',res.id)}
-  const tx={id:uid(),type:'expense',amount:fundAmt,currency:c,category:r.category,description:`${r.name} (pago parcial con fondo)`,date:today(),accountId};
+  if(maxInstallments<1){
+    // Not even one full installment — offer partial payment of what's there
+    const missing=r.amount-fundAmt;
+    const ok=await confirm2(
+      '⚠️ Fondo incompleto',
+      `Solo hay ${fmt(fundAmt,c)} apartados de los ${fmt(r.amount,c)} de la cuota (${pctToNext}% de la próxima). Faltan ${fmt(missing,c)}. Se registrará un pago parcial de ${fmt(fundAmt,c)}. ¿Continuar?`
+    );
+    if(!ok)return;
+    await executeRecPayment(r,fundAmt,allRes,`${r.name} (pago parcial con fondo)`,false);
+    toast(`Pago parcial de ${fmt(fundAmt,c)} registrado. Faltan ${fmt(missing,c)} ⚠️`,'w');
+    renderAll();
+    return;
+  }
+
+  if(maxInstallments===1){
+    // Exactly enough (or more, but less than 2x) for one installment
+    const ok=await confirm2('Confirmar pago',`Se pagará 1 cuota de ${fmt(r.amount,c)}. ${remainderAfterMax>0?`Quedarán ${fmt(remainderAfterMax,c)} (${pctToNext}%) apartados para la próxima cuota.`:''}`);
+    if(!ok)return;
+    await executeRecPayment(r,r.amount,allRes,r.name,true,remainderAfterMax);
+    toast('¡Pago registrado! ✅');renderAll();
+    return;
+  }
+
+  // Multiple installments available — let user choose how many to pay
+  showInstallmentPicker(r,maxInstallments,remainderAfterMax,pctToNext,c);
+}
+
+function showInstallmentPicker(r,maxInstallments,remainder,pct,c){
+  const overlay=document.createElement('div');
+  overlay.id='inst-picker-overlay';
+  overlay.style.cssText='position:fixed;inset:0;z-index:3000;background:rgba(15,13,26,.9);display:flex;align-items:center;justify-content:center;padding:16px';
+  const options=[];
+  for(let n=1;n<=maxInstallments;n++){
+    const used=n*r.amount;
+    const left=r.fund-used;
+    options.push(`<div onclick="confirmInstallments('${r.id}',${n})" style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:var(--bg3);border:1.5px solid var(--border);border-radius:var(--rsm);cursor:pointer;margin-bottom:8px;transition:all .15s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      <div><div style="font-weight:700;font-size:.9rem">Pagar ${n} cuota${n>1?'s':''}</div><div style="font-size:.72rem;color:var(--text2)">${fmt(used,c)} de ${fmt(r.fund,c)} disponibles</div></div>
+      <div style="text-align:right"><div style="font-size:.78rem;color:var(--text2)">Quedará: ${fmt(left,c)}</div></div>
+    </div>`);
+  }
+  overlay.innerHTML=`<div style="background:var(--bg2);border:1.5px solid var(--border);border-radius:var(--radius);padding:22px;max-width:380px;width:100%;max-height:85vh;overflow-y:auto">
+    <h3 style="font-size:.95rem;font-weight:700;margin-bottom:6px">💪 ¡Tienes fondo para varias cuotas!</h3>
+    <p style="font-size:.78rem;color:var(--text2);margin-bottom:14px">Fondo actual: ${fmt(r.fund,c)} · Cuota: ${fmt(r.amount,c)} · Puedes pagar hasta ${maxInstallments} cuota${maxInstallments>1?'s':''}${remainder>0?` y te quedará ${pct}% (${fmt(remainder,c)}) para la siguiente`:''}</p>
+    ${options.join('')}
+    <button class="btn bs btn-full" onclick="document.getElementById('inst-picker-overlay').remove()" style="margin-top:6px">Cancelar</button>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+window.confirmInstallments=async function(recId,n){
+  document.getElementById('inst-picker-overlay')?.remove();
+  const r=D.recurring.find(x=>x.id===recId);if(!r)return;
+  const c=r.currency||cur();
+  const allRes=(D.savingsReserved||[]).filter(x=>x.recurringId===recId);
+  const totalToCharge=n*r.amount;
+  const remainder=(r.fund||0)-totalToCharge;
+  const ok=await confirm2('Confirmar pago',`Se pagarán ${n} cuota${n>1?'s':''} de ${fmt(r.amount,c)} = ${fmt(totalToCharge,c)} en total. ${remainder>0?`Quedarán ${fmt(remainder,c)} apartados para después.`:''}`);
+  if(!ok)return;
+  await executeRecPayment(r,totalToCharge,allRes,n>1?`${r.name} (${n} cuotas)`:r.name,true,remainder,n);
+  toast(`¡${n} cuota${n>1?'s':''} pagada${n>1?'s':''}! ✅`);
+  renderAll();
+};
+
+// Executes the actual payment: removes/adjusts reserved funds proportionally across all reservations,
+// creates ONE expense transaction for the total charged, optionally reduces linked debt,
+// and keeps any remainder reserved for next time.
+async function executeRecPayment(r,amountCharged,allRes,description,markPaid,remainder=0,installments=1){
+  const c=r.currency||cur();
+  // Distribute the charge across existing reservations (oldest first), consuming them
+  let toConsume=amountCharged;
+  let chargeAccountId=allRes[0]?.accountId||D.accounts[0]?.id||'';
+  const sortedRes=[...allRes].sort((a,b)=>new Date(a.date)-new Date(b.date));
+  for(const rv of sortedRes){
+    if(toConsume<=0)break;
+    const take=Math.min(rv.amount,toConsume);
+    toConsume-=take;
+    if(take>=rv.amount){
+      // fully consumed — delete
+      D.savingsReserved=(D.savingsReserved||[]).filter(x=>x.id!==rv.id);
+      await fsDel('savingsReserved',rv.id);
+    }else{
+      // partially consumed — reduce amount, keep the rest reserved
+      rv.amount-=take;
+      D.savingsReserved=D.savingsReserved.map(x=>x.id===rv.id?rv:x);
+      await fsSave('savingsReserved',rv);
+    }
+  }
+  // Register ONE consolidated expense transaction
+  const tx={id:uid(),type:'expense',amount:amountCharged,currency:c,category:r.category,description,date:today(),accountId:chargeAccountId};
   D.transactions.push(tx);await fsSave('transactions',tx);
-  // Recurrente queda NO pagado (paidThisMonth=false) y fondo en 0, porque falta dinero
-  r.paidThisMonth=false;r.fund=0;await fsSave('recurring',r);
-  toast(`Pago parcial de ${fmt(fundAmt,c)} registrado. Faltan ${fmt(missing,c)} ⚠️`,'w');renderAll();
+  // Reduce linked debt now — only at actual payment time, by the amount charged
+  if(r.linkedDebtId){
+    const d=D.debts.find(x=>x.id===r.linkedDebtId);
+    if(d){d.remaining=Math.max(0,(d.remaining||0)-amountCharged);await fsSave('debts',d)}
+  }
+  r.fund=remainder;
+  r.paidThisMonth=markPaid&&remainder<=0?true:r.paidThisMonth;
+  if(markPaid)r.paidThisMonth=remainder>0?false:true; // only "fully paid for the month" flag if nothing left pending for current cycle
+  await fsSave('recurring',r);
 }
 
 async function newMonthRec(id){
   const r=D.recurring.find(x=>x.id===id);if(!r)return;
-  // If there's a reserved fund, return it to the account (delete savingsReserved + log as income reversal)
-  const res=(D.savingsReserved||[]).filter(x=>x.recurringId===id);
-  if(res.length){
-    const totalReserved=res.reduce((s,rv)=>s+(rv.amount||0),0);
-    const ok=await confirm2('¿Nuevo mes?',`Hay ${fmt(totalReserved,r.currency||cur())} reservados. Se devolverán a la cuenta de origen y quedará registrado en Transacciones.`);
+  const fund=r.fund||0;
+  // If fund still has a partial amount toward next installment (less than one full quota), KEEP it reserved for next month
+  // Only ask to return money if there's an unusually large surplus the user wants back
+  if(fund>0&&fund<r.amount){
+    const ok=await confirm2('¿Nuevo mes?',`Tienes ${fmt(fund,r.currency||cur())} apartados (no alcanza para una cuota completa). Se conservarán reservados para la próxima cuota. ¿Continuar?`);
     if(!ok)return;
-    for(const rv of res){
-      D.savingsReserved=(D.savingsReserved||[]).filter(x=>x.id!==rv.id);
-      await fsDel('savingsReserved',rv.id);
-      // Log the return as an income transaction for full traceability
-      const tx={id:uid(),type:'income',amount:rv.amount,currency:rv.currency||r.currency||cur(),category:'🔀 Transferencia',description:`Devolución fondo: ${r.name} (mes reiniciado)`,date:today(),accountId:rv.accountId,_dist:true};
-      D.transactions.push(tx);await fsSave('transactions',tx);
-    }
+    r.paidThisMonth=false;
+    await fsSave('recurring',r);
+    toast('Mes reiniciado — fondo parcial conservado para la próxima cuota');renderAll();
+    return;
   }
-  r.paidThisMonth=false;r.fund=0;await fsSave('recurring',r);
-  toast('Mes reiniciado — fondos devueltos a cuenta');renderAll();
+  if(fund>=r.amount){
+    toast('Tienes fondo suficiente para pagar una cuota. Usa el botón de pago en vez de reiniciar el mes.','w');
+    return;
+  }
+  // fund is 0 — nothing to preserve, just reset the monthly paid flag
+  r.paidThisMonth=false;
+  await fsSave('recurring',r);
+  toast('Mes reiniciado');renderAll();
 }
 
 async function addFundRec(id){
   const r=D.recurring.find(x=>x.id===id);if(!r)return;
-  const left=r.amount-(r.fund||0);
+  const left=Math.max(0,r.amount-(r.fund||0));
   const c=r.currency||cur();
   if(!D.accounts.length){toast('No tienes cuentas registradas','e');return}
-  const result=await askAmountWithAccount(`Abonar fondo "${r.name}" (faltan ${fmt(left,c)})`,String(Math.round(left)),c);
+  const result=await askAmountWithAccount(`Abonar fondo "${r.name}" (faltan ${fmt(left,c)} para 1 cuota)`,String(Math.round(left)||r.amount),c);
   if(!result)return;
   const {amount:amt,accountId}=result;
   const acc=D.accounts.find(a=>a.id===accountId);
   r.fund=(r.fund||0)+amt;
   await fsSave('recurring',r);
   // Create savingsReserved record so the money is tracked as reserved from this account
+  // NOTE: this does NOT touch the linked debt yet — the debt is only reduced when a payment is actually confirmed (payRec)
   const res={id:uid(),recurringId:r.id,recurringName:r.name,accountId,amount:amt,currency:c,date:today(),month:cm()};
   D.savingsReserved=[...(D.savingsReserved||[]),res];
   await fsSave('savingsReserved',res);
-  // If linked to a debt, also reduce debt balance
-  if(r.linkedDebtId){
-    const d=D.debts.find(x=>x.id===r.linkedDebtId);
-    if(d){d.remaining=Math.max(0,(d.remaining||0)-amt);await fsSave('debts',d)}
-  }
   toast(`Fondo actualizado con ${fmt(amt,c)} desde ${acc.emoji} ${acc.name} ✅`);
   renderAll();
 }
@@ -1775,7 +1849,11 @@ function renderRecurring(){
   document.getElementById('rec-reserved').innerHTML=!res.length?'<div style="color:var(--text2);font-size:.83rem;padding:7px 0">No hay fondos apartados este mes</div>':res.map(r=>{const a=D.accounts.find(x=>x.id===r.accountId);return`<div style="display:flex;align-items:center;gap:9px;padding:8px 0;border-bottom:1px solid var(--border)"><span class="badge ba">🔒 Reservado</span><div style="flex:1"><div style="font-size:.83rem;font-weight:500">${r.recurringName}</div><div style="font-size:.7rem;color:var(--text2)">${a?`${a.emoji} ${a.name}`:'—'} · ${r.date}</div></div><strong>${fmt(r.amount,r.currency||c)}</strong></div>`}).join('');
   if(!D.recurring.length){document.getElementById('recurring-list').innerHTML='<div class="empty"><div class="ei">🔄</div><h3>Sin recurrentes</h3><p>Agrega gastos que se repiten cada mes</p></div>';return}
   document.getElementById('recurring-list').innerHTML=D.recurring.map(r=>{
-    const pct=r.amount>0?Math.round(((r.fund||0)/r.amount)*100):0;
+    const fund=r.fund||0;
+    const installments=r.amount>0?Math.floor(fund/r.amount):0;
+    const remainder=fund-(installments*r.amount);
+    const pctToNext=r.amount>0?Math.round((remainder/r.amount)*100):0;
+    const overallPct=r.amount>0?Math.round((fund/r.amount)*100):0;
     const due=r.day===td,debt=r.linkedDebtId?D.debts.find(d=>d.id===r.linkedDebtId):null;
     return`<div class="card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:9px">
@@ -1785,17 +1863,18 @@ function renderRecurring(){
           <button class="btn bic bsm" onclick="deleteRec('${r.id}')">🗑️</button>
         </div>
       </div>
-      <div style="font-size:1.25rem;font-weight:800;color:var(--accent3);margin-bottom:7px">${fmt(r.amount,r.currency||c)}</div>
-      <div style="font-size:.75rem;color:var(--text2);margin-bottom:5px">Fondo: ${fmt(r.fund||0,r.currency||c)} (${pct}%)</div>
-      <div class="pw" style="margin-bottom:9px"><div class="pb ${pct>=100?'g':'y'}" style="width:${Math.min(pct,100)}%"></div></div>
+      <div style="font-size:1.25rem;font-weight:800;color:var(--accent3);margin-bottom:7px">${fmt(r.amount,r.currency||c)} <span style="font-size:.68rem;color:var(--text2);font-weight:500">por cuota</span></div>
+      <div style="font-size:.75rem;color:var(--text2);margin-bottom:5px">Fondo total: ${fmt(fund,r.currency||c)}${installments>0?` · <span class="cg" style="font-weight:700">${installments} cuota${installments>1?'s':''} lista${installments>1?'s':''}</span>`:''}</div>
+      <div class="pw" style="margin-bottom:5px"><div class="pb ${pctToNext>=100||installments>0?'g':'y'}" style="width:${installments>0?100:Math.min(pctToNext,100)}%"></div></div>
+      <div style="font-size:.7rem;color:var(--text2);margin-bottom:9px">${installments>0?(remainder>0?`+ ${pctToNext}% (${fmt(remainder,r.currency||c)}) hacia la cuota ${installments+1}`:'Fondo exacto, sin sobrante'):`${pctToNext}% de la próxima cuota`}</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         ${r.paidThisMonth
           ?'<span class="badge bi">✅ Pagado este mes</span>'
-          :(r.fund||0)<=0
+          :fund<=0
             ?`<span class="badge by">⚠️ Sin fondo apartado</span><button class="btn bsu bsm" onclick="addFundRec('${r.id}')">+ Fondo</button>`
-            :pct>=100
-              ?`<button class="btn bsu bsm" onclick="payRec('${r.id}')">✅ Ya pagué</button><button class="btn bsu bsm" onclick="addFundRec('${r.id}')">+ Fondo</button>`
-              :`<button class="btn bs bsm" onclick="payRec('${r.id}')">⚠️ Pagar parcial (${fmt(r.fund||0,r.currency||c)})</button><button class="btn bsu bsm" onclick="addFundRec('${r.id}')">+ Fondo</button>`}
+            :installments>=1
+              ?`<button class="btn bsu bsm" onclick="payRec('${r.id}')">✅ Pagar ${installments>1?`(${installments} disp.)`:''}</button><button class="btn bsu bsm" onclick="addFundRec('${r.id}')">+ Fondo</button>`
+              :`<button class="btn bs bsm" onclick="payRec('${r.id}')">⚠️ Pagar parcial (${fmt(fund,r.currency||c)})</button><button class="btn bsu bsm" onclick="addFundRec('${r.id}')">+ Fondo</button>`}
         <button class="btn bs bsm" onclick="newMonthRec('${r.id}')">🔄 Nuevo mes</button>
       </div>
     </div>`;
@@ -1910,7 +1989,7 @@ async function confirmDist(){
       r.fund=(r.fund||0)+op.amt;await fsSave('recurring',r);
       const res={id:uid(),recurringId:r.id,recurringName:r.name,accountId:distSrc,amount:op.amt,currency:r.currency||c,date:today(),month:cm()};
       D.savingsReserved=[...(D.savingsReserved||[]),res];await fsSave('savingsReserved',res);
-      if(r.linkedDebtId){const d=D.debts.find(x=>x.id===r.linkedDebtId);if(d){d.remaining=Math.max(0,(d.remaining||0)-op.amt);await fsSave('debts',d)}}
+      // NOTE: linked debt is NOT reduced here — it only reduces when the recurring payment is actually confirmed (payRec)
     }
   }
   closeMod('mod-dist');toast(`Distribución confirmada: ${fmt(total,c)} ✅`);renderAll();
