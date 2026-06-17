@@ -1374,8 +1374,9 @@ async function saveTx(){
   const accountId=document.getElementById('tx-acc').value;
   if(!amount){toast('Ingresa un monto válido','e');return}
   if(!accountId){toast('Selecciona una cuenta','e');return}
-  const tx={id,type,amount,category,description,date,notes,currency,accountId};
-  const isNew=!D.transactions.find(x=>x.id===id);
+  const existing=D.transactions.find(x=>x.id===id);
+  const tx={id,type,amount,category,description,date,notes,currency,accountId,timestamp:existing?.timestamp||Date.now()};
+  const isNew=!existing;
   const idx=D.transactions.findIndex(x=>x.id===id);
   if(idx>=0)D.transactions[idx]=tx;else D.transactions.push(tx);
   await fsSave('transactions',tx);
@@ -1405,6 +1406,7 @@ function renderTx(){
   // Group by date
   const grouped={};
   txs.forEach(t=>{if(!grouped[t.date])grouped[t.date]=[];grouped[t.date].push(t)});
+  Object.values(grouped).forEach(arr=>arr.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0)));
   list.innerHTML=Object.entries(grouped).map(([date,items])=>{
     const dayInc=items.filter(t=>t.type==='income').reduce((s,t)=>s+(t.amount||0),0);
     const dayExp=items.filter(t=>t.type==='expense').reduce((s,t)=>s+(t.amount||0),0);
@@ -1420,14 +1422,19 @@ function renderTx(){
       </div>
       ${items.map(t=>{
         const a=D.accounts.find(x=>x.id===t.accountId);
+        const timeStr=t.timestamp?new Date(t.timestamp).toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'}):'';
         return`<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid rgba(46,42,69,.5)">
           <div style="width:36px;height:36px;border-radius:50%;background:${t.type==='income'?'rgba(34,197,94,.15)':'rgba(239,68,68,.15)'};display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:.9rem">${t.type==='income'?'▲':'▼'}</div>
           <div style="flex:1;min-width:0">
             <div style="font-size:.86rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.description||t.category}</div>
-            <div style="font-size:.72rem;color:var(--text2);display:flex;align-items:center;gap:5px;flex-wrap:wrap">
+            <div style="font-size:.72rem;color:var(--text2);display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:2px">
               <span class="badge ${t.type==='income'?'bi':'be'}" style="font-size:.63rem">${t.category}</span>
               ${a?`<span>${a.emoji} ${a.name}</span>`:''}
-              ${t._dist?'<span class="badge ba" style="font-size:.6rem">💸 Dist</span>':''}
+              ${timeStr?`<span style="opacity:.7">🕐 ${timeStr}</span>`:''}
+              ${t._recurringPayment?`<span class="badge ba" style="font-size:.6rem">🔄 Recurrente</span>`:''}
+              ${t._linkedDebtId?`<span class="badge by" style="font-size:.6rem">💳 → ${t._linkedDebtName||'Deuda'}</span>`:''}
+              ${t._linkedGoalId?`<span class="badge" style="font-size:.6rem;background:rgba(168,85,247,.15);color:var(--accent3)">🎯 → ${t._linkedGoalName||'Meta'}</span>`:''}
+              ${t._dist&&!t._recurringPayment?'<span class="badge ba" style="font-size:.6rem">💸 Dist</span>':''}
             </div>
           </div>
           <div style="text-align:right;flex-shrink:0">
@@ -1551,7 +1558,7 @@ async function payDebt(id){
   }
   d.remaining=Math.max(0,(d.remaining||0)-amt);
   await fsSave('debts',d);
-  const tx={id:uid(),type:'expense',amount:amt,currency:c,category:'💳 Deudas',description:`Pago: ${d.name}`,date:today(),accountId};
+  const tx={id:uid(),type:'expense',amount:amt,currency:c,category:'💳 Deudas',description:`Pago: ${d.name}`,date:today(),timestamp:Date.now(),accountId,_linkedDebtId:d.id,_linkedDebtName:d.name};
   D.transactions.push(tx);await fsSave('transactions',tx);
   toast(`Pago de ${fmt(amt,c)} registrado ✅`);renderAll();
 }
@@ -1622,7 +1629,7 @@ async function addToGoal(id){
   g.current=Math.min(g.target,(g.current||0)+amt);
   await fsSave('goals',g);
   const acc=D.accounts.find(a=>a.id===accountId);
-  const tx={id:uid(),type:'expense',amount:amt,currency:c,category:'🎯 Metas',description:`Ahorro: ${g.name}`,date:today(),accountId};
+  const tx={id:uid(),type:'expense',amount:amt,currency:c,category:'🎯 Metas',description:`Ahorro: ${g.name}`,date:today(),timestamp:Date.now(),accountId,_linkedGoalId:g.id,_linkedGoalName:g.name};
   D.transactions.push(tx);await fsSave('transactions',tx);
   toast(`${fmt(amt,c)} agregado a "${g.name}" desde ${acc.emoji} ${acc.name} ✅`);renderAll();
 }
@@ -1785,13 +1792,18 @@ async function executeRecPayment(r,amountCharged,allRes,description,markPaid,rem
       await fsSave('savingsReserved',rv);
     }
   }
-  // Register ONE consolidated expense transaction
-  const tx={id:uid(),type:'expense',amount:amountCharged,currency:c,category:r.category,description,date:today(),accountId:chargeAccountId};
+  const debt=r.linkedDebtId?D.debts.find(x=>x.id===r.linkedDebtId):null;
+  // Register ONE consolidated expense transaction, tagged clearly as a recurring payment
+  const tx={
+    id:uid(),type:'expense',amount:amountCharged,currency:c,category:r.category,description,
+    date:today(),timestamp:Date.now(),accountId:chargeAccountId,
+    _recurringPayment:true,_recurringId:r.id,_recurringName:r.name,
+    _linkedDebtId:r.linkedDebtId||null,_linkedDebtName:debt?debt.name:null
+  };
   D.transactions.push(tx);await fsSave('transactions',tx);
   // Reduce linked debt now — only at actual payment time, by the amount charged
-  if(r.linkedDebtId){
-    const d=D.debts.find(x=>x.id===r.linkedDebtId);
-    if(d){d.remaining=Math.max(0,(d.remaining||0)-amountCharged);await fsSave('debts',d)}
+  if(debt){
+    debt.remaining=Math.max(0,(debt.remaining||0)-amountCharged);await fsSave('debts',debt);
   }
   r.fund=remainder;
   r.paidThisMonth=markPaid&&remainder<=0?true:r.paidThisMonth;
@@ -1971,18 +1983,18 @@ async function confirmDist(){
   }
   for(const op of ops){
     if(op.type==='acc'){
-      const txOut={id:uid(),type:'expense',amount:op.amt,currency:c,category:'🔀 Transferencia',description:`Transferencia a ${op.toName}`,date:today(),accountId:distSrc,_dist:true};
-      const txIn={id:uid(),type:'income',amount:op.amt,currency:c,category:'🔀 Transferencia',description:`Transferencia recibida`,date:today(),accountId:op.toId,_dist:true};
+      const txOut={id:uid(),type:'expense',amount:op.amt,currency:c,category:'🔀 Transferencia',description:`Transferencia a ${op.toName}`,date:today(),timestamp:Date.now(),accountId:distSrc,_dist:true};
+      const txIn={id:uid(),type:'income',amount:op.amt,currency:c,category:'🔀 Transferencia',description:`Transferencia recibida`,date:today(),timestamp:Date.now(),accountId:op.toId,_dist:true};
       D.transactions.push(txOut,txIn);await fsSave('transactions',txOut);await fsSave('transactions',txIn);
     }else if(op.type==='goal'){
       const g=D.goals.find(x=>x.id===op.id);if(!g)continue;
       g.current=Math.min(g.target,(g.current||0)+op.amt);await fsSave('goals',g);
-      const tx={id:uid(),type:'expense',amount:op.amt,currency:c,category:'🎯 Metas',description:`Ahorro: ${g.name}`,date:today(),accountId:distSrc,_dist:true};
+      const tx={id:uid(),type:'expense',amount:op.amt,currency:c,category:'🎯 Metas',description:`Ahorro: ${g.name}`,date:today(),timestamp:Date.now(),accountId:distSrc,_dist:true,_linkedGoalId:g.id,_linkedGoalName:g.name};
       D.transactions.push(tx);await fsSave('transactions',tx);
     }else if(op.type==='debt'){
       const d=D.debts.find(x=>x.id===op.id);if(!d)continue;
       d.remaining=Math.max(0,(d.remaining||0)-op.amt);await fsSave('debts',d);
-      const tx={id:uid(),type:'expense',amount:op.amt,currency:c,category:'💳 Deudas',description:`Abono: ${d.name}`,date:today(),accountId:distSrc,_dist:true};
+      const tx={id:uid(),type:'expense',amount:op.amt,currency:c,category:'💳 Deudas',description:`Abono: ${d.name}`,date:today(),timestamp:Date.now(),accountId:distSrc,_dist:true,_linkedDebtId:d.id,_linkedDebtName:d.name};
       D.transactions.push(tx);await fsSave('transactions',tx);
     }else if(op.type==='rec'){
       const r=D.recurring.find(x=>x.id===op.id);if(!r)continue;
@@ -2301,10 +2313,17 @@ function renderCal(){
 }
 function showCalDay(y,mo,d){
   const ds=`${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-  const txs=D.transactions.filter(t=>t.date===ds);
+  const txs=D.transactions.filter(t=>t.date===ds).sort((a,b)=>(a.timestamp||0)-(b.timestamp||0));
   const c=cur();
   document.getElementById('cal-sel-lbl').textContent=`${d}/${mo}/${y}`;
-  document.getElementById('cal-detail').innerHTML=!txs.length?'<div class="cm" style="font-size:.83rem;padding:7px 0">Sin transacciones este día</div>':txs.map(t=>`<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)"><span class="badge ${t.type==='income'?'bi':'be'}">${t.type==='income'?'▲':'▼'}</span><div style="flex:1;font-size:.83rem">${t.description||t.category}</div><strong style="color:${t.type==='income'?'var(--green)':'var(--red)'}">${fmt(t.amount,t.currency||c)}</strong></div>`).join('');
+  document.getElementById('cal-detail').innerHTML=!txs.length?'<div class="cm" style="font-size:.83rem;padding:7px 0">Sin transacciones este día</div>':txs.map(t=>{
+    const timeStr=t.timestamp?new Date(t.timestamp).toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'}):'';
+    return`<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">
+      <span class="badge ${t.type==='income'?'bi':'be'}">${t.type==='income'?'▲':'▼'}</span>
+      <div style="flex:1;font-size:.83rem">${t.description||t.category}${timeStr?`<div style="font-size:.68rem;color:var(--text2)">🕐 ${timeStr}</div>`:''}</div>
+      <strong style="color:${t.type==='income'?'var(--green)':'var(--red)'}">${fmt(t.amount,t.currency||c)}</strong>
+    </div>`;
+  }).join('');
 }
 
 // ── ACHIEVEMENTS ──
