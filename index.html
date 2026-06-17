@@ -134,7 +134,7 @@ tbody tr:hover{background:rgba(168,85,247,.04)}
 /* AMOUNT MODAL */
 #am{display:none;position:fixed;inset:0;z-index:2000;background:rgba(15,13,26,.9);align-items:center;justify-content:center}
 #am.open{display:flex}
-#ab{background:var(--bg2);border:1.5px solid var(--border);border-radius:var(--radius);padding:26px;max-width:320px;width:90%}
+#ab{background:var(--bg2);border:1.5px solid var(--border);border-radius:var(--radius);padding:24px;max-width:380px;width:92%;max-height:85vh;overflow-y:auto}
 #ab h3{font-size:.93rem;margin-bottom:14px;font-weight:700}
 #am-input{margin-bottom:14px}
 .abtn{display:flex;gap:10px;justify-content:flex-end}
@@ -673,7 +673,12 @@ input:checked+.tsl::before{transform:translateX(16px)}
 <div id="am">
   <div id="ab">
     <h3 id="am-title">Ingresa el monto</h3>
+    <div id="am-acc-wrap" style="margin-bottom:12px">
+      <label style="display:block;font-size:.72rem;font-weight:600;color:var(--text2);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Cuenta de origen</label>
+      <div id="am-acc-list" style="display:flex;gap:7px;flex-wrap:wrap"></div>
+    </div>
     <div id="am-input"><input type="number" id="am-val" placeholder="0" min="0"></div>
+    <div id="am-balance-hint" style="font-size:.72rem;color:var(--text2);margin-top:-8px;margin-bottom:14px"></div>
     <div class="abtn">
       <button class="btn bs" id="am-cancel">Cancelar</button>
       <button class="btn bp" id="am-ok">Confirmar</button>
@@ -1058,15 +1063,47 @@ function confirm2(title='¿Eliminar?',msg='No se puede deshacer.'){
 document.getElementById('co-ok').onclick=()=>{document.getElementById('co').classList.remove('open');confirmCb&&confirmCb(true);confirmCb=null};
 document.getElementById('co-cancel').onclick=()=>{document.getElementById('co').classList.remove('open');confirmCb&&confirmCb(false);confirmCb=null};
 
-// ── AMOUNT DIALOG ──
-function askAmount(title,placeholder='0'){
+// ── AMOUNT + ACCOUNT DIALOG ──
+// Returns {amount, accountId} or null if cancelled
+let amSelectedAcc=null;
+function askAmountWithAccount(title,placeholder='0',currency=null){
   return new Promise(res=>{
     document.getElementById('am-title').textContent=title;
     const inp=document.getElementById('am-val');
     inp.value='';inp.placeholder=placeholder;
+    const c=currency||cur();
+    // Build account list sorted by balance desc, only show accounts (all, even with 0 or negative)
+    const accList=document.getElementById('am-acc-list');
+    amSelectedAcc=D.accounts.length?D.accounts.reduce((best,a)=>accBal(a.id)>accBal(best.id)?a:best,D.accounts[0]).id:null;
+    function renderAccPicker(){
+      accList.innerHTML=D.accounts.map(a=>{
+        const bal=accBal(a.id);
+        return`<div class="ac ${a.id===amSelectedAcc?'sel':''}" onclick="window._amSelectAcc('${a.id}')">${a.emoji} ${a.name} <span class="cb">${fmt(bal,c)}</span></div>`;
+      }).join('')||'<div style="font-size:.8rem;color:var(--text2)">No tienes cuentas</div>';
+      updateBalanceHint();
+    }
+    function updateBalanceHint(){
+      const hint=document.getElementById('am-balance-hint');
+      const acc=D.accounts.find(a=>a.id===amSelectedAcc);
+      if(!acc){hint.textContent='';return}
+      const bal=accBal(acc.id);
+      hint.innerHTML=`Saldo disponible en ${acc.emoji} ${acc.name}: <strong class="${bal>=0?'cg':'cr'}">${fmt(bal,c)}</strong>`;
+    }
+    window._amSelectAcc=(id)=>{amSelectedAcc=id;renderAccPicker()};
+    renderAccPicker();
     document.getElementById('am').classList.add('open');
     setTimeout(()=>inp.focus(),100);
-    amountCb=res;
+    amountCb=(amt)=>{
+      if(!amt){res(null);return}
+      const acc=D.accounts.find(a=>a.id===amSelectedAcc);
+      if(!acc){toast('Selecciona una cuenta','e');res(null);return}
+      const bal=accBal(acc.id);
+      if(amt>bal){
+        toast(`Saldo insuficiente en ${acc.emoji} ${acc.name}. Disponible: ${fmt(bal,c)}`,'e');
+        res(null);return;
+      }
+      res({amount:amt,accountId:acc.id});
+    };
   });
 }
 document.getElementById('am-ok').onclick=()=>{
@@ -1504,21 +1541,17 @@ async function deleteDebt(id){
 async function payDebt(id){
   const d=D.debts.find(x=>x.id===id);if(!d)return;
   const c=d.currency||cur();
-  const amt=await askAmount(`Pago a "${d.name}" (saldo: ${fmt(d.remaining,c)})`,String(d.monthlyPayment||''));
-  if(!amt)return;
+  if(!D.accounts.length){toast('No tienes cuentas registradas','e');return}
+  const result=await askAmountWithAccount(`Pago a "${d.name}" (saldo: ${fmt(d.remaining,c)})`,String(d.monthlyPayment||''),c);
+  if(!result)return;
+  const {amount:amt,accountId}=result;
   if(amt>d.remaining){
     const ok=await confirm2('¿Pago mayor al saldo?',`El pago (${fmt(amt,c)}) supera el saldo restante (${fmt(d.remaining,c)}). Se ajustará al saldo exacto.`);
     if(!ok)return;
   }
-  // Pick account with best balance
-  const sortedAccs=[...D.accounts].sort((a,b)=>accBal(b.id)-accBal(a.id));
-  const srcAcc=sortedAccs[0];
-  if(srcAcc&&accBal(srcAcc.id)<amt){
-    toast(`Saldo insuficiente en ${srcAcc.emoji} ${srcAcc.name} (${fmt(accBal(srcAcc.id),c)})`,'e');return;
-  }
   d.remaining=Math.max(0,(d.remaining||0)-amt);
   await fsSave('debts',d);
-  const tx={id:uid(),type:'expense',amount:amt,currency:c,category:'💳 Deudas',description:`Pago: ${d.name}`,date:today(),accountId:srcAcc?.id||''};
+  const tx={id:uid(),type:'expense',amount:amt,currency:c,category:'💳 Deudas',description:`Pago: ${d.name}`,date:today(),accountId};
   D.transactions.push(tx);await fsSave('transactions',tx);
   toast(`Pago de ${fmt(amt,c)} registrado ✅`);renderAll();
 }
@@ -1581,19 +1614,17 @@ async function deleteGoal(id){
 async function addToGoal(id){
   const g=D.goals.find(x=>x.id===id);if(!g)return;
   const left=g.target-g.current;
-  const amt=await askAmount(`Agregar ahorro a "${g.name}" (faltan ${fmt(left,g.currency||cur())})`,String(Math.round(left)));
-  if(!amt)return;
-  // Pick account with best balance
-  const sortedAccs=[...D.accounts].sort((a,b)=>accBal(b.id)-accBal(a.id));
-  const srcAcc=sortedAccs[0];
-  if(!srcAcc){toast('No tienes cuentas registradas','e');return}
-  const bal=accBal(srcAcc.id);
-  if(bal<amt){toast(`Saldo insuficiente en ${srcAcc.emoji} ${srcAcc.name} (${fmt(bal,g.currency||cur())})`,'e');return}
+  const c=g.currency||cur();
+  if(!D.accounts.length){toast('No tienes cuentas registradas','e');return}
+  const result=await askAmountWithAccount(`Agregar ahorro a "${g.name}" (faltan ${fmt(left,c)})`,String(Math.round(left)),c);
+  if(!result)return;
+  const {amount:amt,accountId}=result;
   g.current=Math.min(g.target,(g.current||0)+amt);
   await fsSave('goals',g);
-  const tx={id:uid(),type:'expense',amount:amt,currency:g.currency||cur(),category:'🎯 Metas',description:`Ahorro: ${g.name}`,date:today(),accountId:srcAcc.id};
+  const acc=D.accounts.find(a=>a.id===accountId);
+  const tx={id:uid(),type:'expense',amount:amt,currency:c,category:'🎯 Metas',description:`Ahorro: ${g.name}`,date:today(),accountId};
   D.transactions.push(tx);await fsSave('transactions',tx);
-  toast(`${fmt(amt,g.currency||cur())} agregado a "${g.name}" desde ${srcAcc.emoji} ${srcAcc.name} ✅`);renderAll();
+  toast(`${fmt(amt,c)} agregado a "${g.name}" desde ${acc.emoji} ${acc.name} ✅`);renderAll();
 }
 
 function renderGoals(){
@@ -1705,9 +1736,25 @@ async function newMonthRec(id){
 async function addFundRec(id){
   const r=D.recurring.find(x=>x.id===id);if(!r)return;
   const left=r.amount-(r.fund||0);
-  const amt=await askAmount(`Abonar fondo "${r.name}" (faltan ${fmt(left,r.currency||cur())})`,String(Math.round(left)));
-  if(!amt)return;
-  r.fund=(r.fund||0)+amt;await fsSave('recurring',r);toast('Fondo actualizado');renderRecurring();
+  const c=r.currency||cur();
+  if(!D.accounts.length){toast('No tienes cuentas registradas','e');return}
+  const result=await askAmountWithAccount(`Abonar fondo "${r.name}" (faltan ${fmt(left,c)})`,String(Math.round(left)),c);
+  if(!result)return;
+  const {amount:amt,accountId}=result;
+  const acc=D.accounts.find(a=>a.id===accountId);
+  r.fund=(r.fund||0)+amt;
+  await fsSave('recurring',r);
+  // Create savingsReserved record so the money is tracked as reserved from this account
+  const res={id:uid(),recurringId:r.id,recurringName:r.name,accountId,amount:amt,currency:c,date:today(),month:cm()};
+  D.savingsReserved=[...(D.savingsReserved||[]),res];
+  await fsSave('savingsReserved',res);
+  // If linked to a debt, also reduce debt balance
+  if(r.linkedDebtId){
+    const d=D.debts.find(x=>x.id===r.linkedDebtId);
+    if(d){d.remaining=Math.max(0,(d.remaining||0)-amt);await fsSave('debts',d)}
+  }
+  toast(`Fondo actualizado con ${fmt(amt,c)} desde ${acc.emoji} ${acc.name} ✅`);
+  renderAll();
 }
 
 function renderRecurring(){
