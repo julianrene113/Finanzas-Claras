@@ -1689,48 +1689,59 @@ async function payRec(id){
   // Check if there's a reserved fund
   const res=(D.savingsReserved||[]).find(x=>x.recurringId===id&&x.month===cm());
   const fundAmt=r.fund||0;
-  const accountId=res?.accountId||D.accounts[0]?.id||'';
-  const accBalance=accBal(accountId);
-  
-  // Validate: need fund >= amount OR account balance >= amount
-  if(fundAmt<r.amount){
-    const missing=r.amount-fundAmt;
-    const ok=await confirm2(
-      '⚠️ Fondo insuficiente',
-      `El fondo apartado es ${fmt(fundAmt,c)} pero el gasto es ${fmt(r.amount,c)}. Faltan ${fmt(missing,c)}. ¿Registrar igualmente debitando de la cuenta directamente?`
-    );
-    if(!ok)return;
-    // Check account has enough
-    if(accBalance<r.amount){
-      toast(`Saldo insuficiente en la cuenta (${fmt(accBalance,c)})`, 'e');
-      return;
-    }
+
+  if(fundAmt>=r.amount){
+    // Full fund covers it — pay complete amount
+    const accountId=res?.accountId||D.accounts[0]?.id||'';
+    if(res){D.savingsReserved=(D.savingsReserved||[]).filter(x=>x.id!==res.id);await fsDel('savingsReserved',res.id)}
+    const tx={id:uid(),type:'expense',amount:r.amount,currency:c,category:r.category,description:r.name,date:today(),accountId};
+    D.transactions.push(tx);await fsSave('transactions',tx);
+    r.paidThisMonth=true;r.fund=0;await fsSave('recurring',r);
+    toast('¡Pago registrado! ✅');renderAll();
+    return;
   }
-  
-  // Remove reserved fund if exists
+
+  // Fund is incomplete or zero
+  if(fundAmt<=0){
+    toast('No hay fondo apartado. Usa "+ Fondo" para abonar primero, o registra el gasto manualmente desde Transacciones.','e');
+    return;
+  }
+
+  // Partial fund: only charge what's actually reserved, leave the rest pending
+  const missing=r.amount-fundAmt;
+  const ok=await confirm2(
+    '⚠️ Fondo incompleto',
+    `Solo hay ${fmt(fundAmt,c)} apartados de los ${fmt(r.amount,c)} del gasto. Se registrará un pago parcial de ${fmt(fundAmt,c)} y quedarán pendientes ${fmt(missing,c)}. ¿Continuar?`
+  );
+  if(!ok)return;
+
+  const accountId=res.accountId;
   if(res){D.savingsReserved=(D.savingsReserved||[]).filter(x=>x.id!==res.id);await fsDel('savingsReserved',res.id)}
-  
-  // Register expense
-  const tx={id:uid(),type:'expense',amount:r.amount,currency:c,category:r.category,description:r.name,date:today(),accountId};
+  const tx={id:uid(),type:'expense',amount:fundAmt,currency:c,category:r.category,description:`${r.name} (pago parcial con fondo)`,date:today(),accountId};
   D.transactions.push(tx);await fsSave('transactions',tx);
-  r.paidThisMonth=true;r.fund=0;await fsSave('recurring',r);
-  toast('¡Pago registrado! ✅');renderAll();
+  // Recurrente queda NO pagado (paidThisMonth=false) y fondo en 0, porque falta dinero
+  r.paidThisMonth=false;r.fund=0;await fsSave('recurring',r);
+  toast(`Pago parcial de ${fmt(fundAmt,c)} registrado. Faltan ${fmt(missing,c)} ⚠️`,'w');renderAll();
 }
 
 async function newMonthRec(id){
   const r=D.recurring.find(x=>x.id===id);if(!r)return;
-  // If there's a reserved fund, return it to the account (delete savingsReserved)
+  // If there's a reserved fund, return it to the account (delete savingsReserved + log as income reversal)
   const res=(D.savingsReserved||[]).filter(x=>x.recurringId===id);
   if(res.length){
-    const ok=await confirm2('¿Nuevo mes?',`Hay ${fmt(r.fund||0,r.currency||cur())} reservados. Se devolverán a la cuenta de origen al reiniciar.`);
+    const totalReserved=res.reduce((s,rv)=>s+(rv.amount||0),0);
+    const ok=await confirm2('¿Nuevo mes?',`Hay ${fmt(totalReserved,r.currency||cur())} reservados. Se devolverán a la cuenta de origen y quedará registrado en Transacciones.`);
     if(!ok)return;
     for(const rv of res){
       D.savingsReserved=(D.savingsReserved||[]).filter(x=>x.id!==rv.id);
       await fsDel('savingsReserved',rv.id);
+      // Log the return as an income transaction for full traceability
+      const tx={id:uid(),type:'income',amount:rv.amount,currency:rv.currency||r.currency||cur(),category:'🔀 Transferencia',description:`Devolución fondo: ${r.name} (mes reiniciado)`,date:today(),accountId:rv.accountId,_dist:true};
+      D.transactions.push(tx);await fsSave('transactions',tx);
     }
   }
   r.paidThisMonth=false;r.fund=0;await fsSave('recurring',r);
-  toast('Mes reiniciado — fondos devueltos a cuenta');renderRecurring();
+  toast('Mes reiniciado — fondos devueltos a cuenta');renderAll();
 }
 
 async function addFundRec(id){
@@ -1780,7 +1791,11 @@ function renderRecurring(){
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         ${r.paidThisMonth
           ?'<span class="badge bi">✅ Pagado este mes</span>'
-          :`<button class="btn ${pct>=100?'bsu':'bs'} bsm" onclick="payRec('${r.id}')">${pct>=100?'✅ Ya pagué':'⚠️ Pagar sin fondo completo'}</button><button class="btn bsu bsm" onclick="addFundRec('${r.id}')">+ Fondo</button>`}
+          :(r.fund||0)<=0
+            ?`<span class="badge by">⚠️ Sin fondo apartado</span><button class="btn bsu bsm" onclick="addFundRec('${r.id}')">+ Fondo</button>`
+            :pct>=100
+              ?`<button class="btn bsu bsm" onclick="payRec('${r.id}')">✅ Ya pagué</button><button class="btn bsu bsm" onclick="addFundRec('${r.id}')">+ Fondo</button>`
+              :`<button class="btn bs bsm" onclick="payRec('${r.id}')">⚠️ Pagar parcial (${fmt(r.fund||0,r.currency||c)})</button><button class="btn bsu bsm" onclick="addFundRec('${r.id}')">+ Fondo</button>`}
         <button class="btn bs bsm" onclick="newMonthRec('${r.id}')">🔄 Nuevo mes</button>
       </div>
     </div>`;
