@@ -2189,7 +2189,7 @@ async function sendChat(){
   if(!key){const am=document.createElement('div');am.className='cmsg a';am.textContent='⚠️ Configura tu API Key en Ajustes.';msgs.appendChild(am);return}
   const thinking=document.createElement('div');thinking.className='cmsg a';thinking.textContent='...';msgs.appendChild(thinking);msgs.scrollTop=msgs.scrollHeight;
   try{
-    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,system:`Eres un asesor financiero personal experto. Contexto: ${buildCtx()}. Responde en español, de forma concisa y práctica.`,messages:chatHist})});
+    const res=await fetch('https://finanzas-claras-api.julianrene113.workers.dev',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,system:`Eres un asesor financiero personal experto. Contexto: ${buildCtx()}. Responde en español, de forma concisa y práctica.`,messages:chatHist})});
     const data=await res.json();
     const reply=data.content?.[0]?.text||'Sin respuesta';
     chatHist.push({role:'assistant',content:reply});
@@ -2204,7 +2204,7 @@ async function genPlan(){
   const key=await getKey();
   if(!key){document.getElementById('plan-content').textContent='⚠️ Configura tu API Key en Ajustes.';return}
   try{
-    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1200,system:'Eres un asesor financiero personal experto. Responde en español.',messages:[{role:'user',content:`Analiza mi situación financiera y dame un plan de acción concreto para los próximos 3 meses con pasos específicos. ${buildCtx()}`}]})});
+    const res=await fetch('https://finanzas-claras-api.julianrene113.workers.dev',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1200,system:'Eres un asesor financiero personal experto. Responde en español.',messages:[{role:'user',content:`Analiza mi situación financiera y dame un plan de acción concreto para los próximos 3 meses con pasos específicos. ${buildCtx()}`}]})});
     const data=await res.json();
     const reply=data.content?.[0]?.text||'Sin respuesta';
     document.getElementById('plan-content').innerHTML=reply.replace(/\n/g,'<br>');
@@ -2243,7 +2243,7 @@ async function analyzeScan(){
   reader.onload=async ev=>{
     const b64=ev.target.result.split(',')[1];
     try{
-      const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:400,messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:file.type,data:b64}},{type:'text',text:'Analiza este recibo. Responde SOLO JSON sin markdown: {"amount":0,"date":"YYYY-MM-DD","description":"","category":"","notes":""} Categoría debe ser una de: 🍔 Alimentación, 🚗 Transporte, 💡 Servicios, 🎮 Entretenimiento, 💊 Salud, 👕 Ropa, 🌟 Otro'}]}]})});
+      const res=await fetch('https://finanzas-claras-api.julianrene113.workers.dev',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:400,messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:file.type,data:b64}},{type:'text',text:'Analiza este recibo. Responde SOLO JSON sin markdown: {"amount":0,"date":"YYYY-MM-DD","description":"","category":"","notes":""} Categoría debe ser una de: 🍔 Alimentación, 🚗 Transporte, 💡 Servicios, 🎮 Entretenimiento, 💊 Salud, 👕 Ropa, 🌟 Otro'}]}]})});
       const data=await res.json();
       const text=data.content?.[0]?.text||'{}';
       let parsed;try{parsed=JSON.parse(text.replace(/```json|```/g,'').trim())}catch{parsed={}}
