@@ -2190,11 +2190,25 @@ async function sendChat(){
   const thinking=document.createElement('div');thinking.className='cmsg a';thinking.textContent='...';msgs.appendChild(thinking);msgs.scrollTop=msgs.scrollHeight;
   try{
     const res=await fetch('https://finanzas-claras-api.julianrene113.workers.dev',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,system:`Eres un asesor financiero personal experto. Contexto: ${buildCtx()}. Responde en español, de forma concisa y práctica.`,messages:chatHist})});
+    if(!res.ok){
+      const errText=await res.text();
+      console.error('Chat API error:',errText);
+      let errMsg=errText;
+      try{const ej=JSON.parse(errText);errMsg=ej.error?.message||ej.error||errText}catch{}
+      thinking.textContent=`❌ Error (${res.status}): ${errMsg.slice(0,150)}`;
+      msgs.scrollTop=msgs.scrollHeight;
+      return;
+    }
     const data=await res.json();
-    const reply=data.content?.[0]?.text||'Sin respuesta';
+    console.log('Chat API response:',data);
+    if(data.error){thinking.textContent=`❌ ${data.error.message||data.error}`;msgs.scrollTop=msgs.scrollHeight;return}
+    const reply=data.content?.[0]?.text||'Sin respuesta — la IA devolvió contenido vacío';
     chatHist.push({role:'assistant',content:reply});
     thinking.textContent=reply;
-  }catch(e){thinking.textContent='❌ Error al conectar con la IA.'}
+  }catch(e){
+    console.error('sendChat error:',e);
+    thinking.textContent=`❌ Error al conectar: ${e.message}`;
+  }
   msgs.scrollTop=msgs.scrollHeight;
 }
 
@@ -2205,10 +2219,23 @@ async function genPlan(){
   if(!key){document.getElementById('plan-content').textContent='⚠️ Configura tu API Key en Ajustes.';return}
   try{
     const res=await fetch('https://finanzas-claras-api.julianrene113.workers.dev',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1200,system:'Eres un asesor financiero personal experto. Responde en español.',messages:[{role:'user',content:`Analiza mi situación financiera y dame un plan de acción concreto para los próximos 3 meses con pasos específicos. ${buildCtx()}`}]})});
+    if(!res.ok){
+      const errText=await res.text();
+      console.error('Plan API error:',errText);
+      let errMsg=errText;
+      try{const ej=JSON.parse(errText);errMsg=ej.error?.message||ej.error||errText}catch{}
+      document.getElementById('plan-content').innerHTML=`<span style="color:var(--red)">❌ Error (${res.status}): ${errMsg.slice(0,200)}</span>`;
+      return;
+    }
     const data=await res.json();
-    const reply=data.content?.[0]?.text||'Sin respuesta';
+    console.log('Plan API response:',data);
+    if(data.error){document.getElementById('plan-content').innerHTML=`<span style="color:var(--red)">❌ ${data.error.message||data.error}</span>`;return}
+    const reply=data.content?.[0]?.text||'Sin respuesta — la IA devolvió contenido vacío';
     document.getElementById('plan-content').innerHTML=reply.replace(/\n/g,'<br>');
-  }catch(e){document.getElementById('plan-content').textContent='❌ Error al conectar con la IA.'}
+  }catch(e){
+    console.error('genPlan error:',e);
+    document.getElementById('plan-content').innerHTML=`<span style="color:var(--red)">❌ Error al conectar: ${e.message}</span>`;
+  }
 }
 
 function buildCtx(){
@@ -2244,9 +2271,39 @@ async function analyzeScan(){
     const b64=ev.target.result.split(',')[1];
     try{
       const res=await fetch('https://finanzas-claras-api.julianrene113.workers.dev',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:400,messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:file.type,data:b64}},{type:'text',text:'Analiza este recibo. Responde SOLO JSON sin markdown: {"amount":0,"date":"YYYY-MM-DD","description":"","category":"","notes":""} Categoría debe ser una de: 🍔 Alimentación, 🚗 Transporte, 💡 Servicios, 🎮 Entretenimiento, 💊 Salud, 👕 Ropa, 🌟 Otro'}]}]})});
+
+      if(!res.ok){
+        const errText=await res.text();
+        console.error('API error response:',errText);
+        let errMsg='Error desconocido';
+        try{const errJson=JSON.parse(errText);errMsg=errJson.error?.message||errJson.error||errText}catch{errMsg=errText}
+        document.getElementById('scan-result').innerHTML=`<div style="color:var(--red);font-size:.83rem;padding:10px;background:rgba(239,68,68,.1);border-radius:8px">❌ Error de la API (${res.status}): ${errMsg.slice(0,200)}</div>`;
+        return;
+      }
+
       const data=await res.json();
-      const text=data.content?.[0]?.text||'{}';
-      let parsed;try{parsed=JSON.parse(text.replace(/```json|```/g,'').trim())}catch{parsed={}}
+      console.log('API response:',data);
+
+      if(data.error){
+        document.getElementById('scan-result').innerHTML=`<div style="color:var(--red);font-size:.83rem;padding:10px;background:rgba(239,68,68,.1);border-radius:8px">❌ ${data.error.message||data.error}</div>`;
+        return;
+      }
+
+      const text=data.content?.[0]?.text;
+      if(!text){
+        document.getElementById('scan-result').innerHTML=`<div style="color:var(--red);font-size:.83rem;padding:10px;background:rgba(239,68,68,.1);border-radius:8px">❌ La IA no devolvió contenido. Respuesta cruda: ${JSON.stringify(data).slice(0,200)}</div>`;
+        return;
+      }
+
+      let parsed;
+      try{
+        parsed=JSON.parse(text.replace(/```json|```/g,'').trim());
+      }catch(parseErr){
+        console.error('JSON parse error:',parseErr,'Raw text:',text);
+        document.getElementById('scan-result').innerHTML=`<div style="color:var(--red);font-size:.83rem;padding:10px;background:rgba(239,68,68,.1);border-radius:8px">❌ No se pudo interpretar la respuesta. Texto recibido: "${text.slice(0,200)}"</div>`;
+        return;
+      }
+
       const safeData=JSON.stringify(parsed).replace(/'/g,"&#39;");
       document.getElementById('scan-result').innerHTML=`
         <div style="background:var(--bg3);border-radius:8px;padding:13px;margin-bottom:11px">
@@ -2256,7 +2313,10 @@ async function analyzeScan(){
           <div style="font-size:.83rem"><strong>Fecha:</strong> ${parsed.date||today()}</div>
         </div>
         <button class="btn bp btn-full" onclick='useScan(${safeData})'>✅ Usar estos datos</button>`;
-    }catch(e){document.getElementById('scan-result').innerHTML='<div style="color:var(--red)">❌ Error al analizar</div>'}
+    }catch(e){
+      console.error('analyzeScan error:',e);
+      document.getElementById('scan-result').innerHTML=`<div style="color:var(--red);font-size:.83rem;padding:10px;background:rgba(239,68,68,.1);border-radius:8px">❌ Error de conexión: ${e.message}</div>`;
+    }
   };
   reader.readAsDataURL(file);
 }
