@@ -2270,7 +2270,33 @@ async function analyzeScan(){
   reader.onload=async ev=>{
     const b64=ev.target.result.split(',')[1];
     try{
-      const res=await fetch('https://finanzas-claras-api.julianrene113.workers.dev',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:400,messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:file.type,data:b64}},{type:'text',text:'Analiza este recibo. Responde SOLO JSON sin markdown: {"amount":0,"date":"YYYY-MM-DD","description":"","category":"","notes":""} Categoría debe ser una de: 🍔 Alimentación, 🚗 Transporte, 💡 Servicios, 🎮 Entretenimiento, 💊 Salud, 👕 Ropa, 🌟 Otro'}]}]})});
+      const prompt=`Analiza este recibo/factura con el MÁXIMO detalle posible. Extrae TODOS los productos línea por línea, exactamente como aparecen.
+
+Responde SOLO JSON sin markdown, sin texto adicional, con esta estructura exacta:
+{
+  "merchant": "nombre del establecimiento",
+  "nit": "NIT o identificación tributaria si aparece",
+  "address": "dirección del establecimiento si aparece",
+  "invoiceNumber": "número de factura/recibo si aparece",
+  "date": "YYYY-MM-DD",
+  "time": "HH:MM si aparece, sino vacío",
+  "paymentMethod": "método de pago si aparece (efectivo, tarjeta, etc)",
+  "items": [
+    {"qty": 1, "name": "nombre exacto del producto", "unit": "unidad (UNID, KILO, LITRO, etc) si aparece", "unitPrice": 0, "iva": "porcentaje de IVA si aparece, ej 19%", "total": 0}
+  ],
+  "subtotal": 0,
+  "totalIva": 0,
+  "amount": 0,
+  "amountReceived": 0,
+  "change": 0,
+  "description": "resumen breve, ej: Nombre del lugar - tipo de compra",
+  "category": "una de: 🍔 Alimentación, 🚗 Transporte, 💡 Servicios, 🎮 Entretenimiento, 💊 Salud, 👕 Ropa, 🌟 Otro",
+  "notes": "cualquier dato adicional relevante (cliente, vendedor, etc)"
+}
+
+IMPORTANTE: extrae cada producto/línea individual del recibo en el array "items", con cantidad, nombre y precio exactos. Si un campo no aparece en el recibo, usa "" o 0 según corresponda. El campo "amount" debe ser el TOTAL final pagado.`;
+
+      const res=await fetch('https://finanzas-claras-api.julianrene113.workers.dev',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:2000,messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:file.type,data:b64}},{type:'text',text:prompt}]}]})});
 
       if(!res.ok){
         const errText=await res.text();
@@ -2300,19 +2326,11 @@ async function analyzeScan(){
         parsed=JSON.parse(text.replace(/```json|```/g,'').trim());
       }catch(parseErr){
         console.error('JSON parse error:',parseErr,'Raw text:',text);
-        document.getElementById('scan-result').innerHTML=`<div style="color:var(--red);font-size:.83rem;padding:10px;background:rgba(239,68,68,.1);border-radius:8px">❌ No se pudo interpretar la respuesta. Texto recibido: "${text.slice(0,200)}"</div>`;
+        document.getElementById('scan-result').innerHTML=`<div style="color:var(--red);font-size:.83rem;padding:10px;background:rgba(239,68,68,.1);border-radius:8px">❌ No se pudo interpretar la respuesta. Texto recibido: "${text.slice(0,300)}"</div>`;
         return;
       }
 
-      const safeData=JSON.stringify(parsed).replace(/'/g,"&#39;");
-      document.getElementById('scan-result').innerHTML=`
-        <div style="background:var(--bg3);border-radius:8px;padding:13px;margin-bottom:11px">
-          <div style="font-size:.83rem;margin-bottom:4px"><strong>Monto:</strong> ${parsed.amount||'—'}</div>
-          <div style="font-size:.83rem;margin-bottom:4px"><strong>Descripción:</strong> ${parsed.description||'—'}</div>
-          <div style="font-size:.83rem;margin-bottom:4px"><strong>Categoría:</strong> ${parsed.category||'—'}</div>
-          <div style="font-size:.83rem"><strong>Fecha:</strong> ${parsed.date||today()}</div>
-        </div>
-        <button class="btn bp btn-full" onclick='useScan(${safeData})'>✅ Usar estos datos</button>`;
+      renderScanDetail(parsed);
     }catch(e){
       console.error('analyzeScan error:',e);
       document.getElementById('scan-result').innerHTML=`<div style="color:var(--red);font-size:.83rem;padding:10px;background:rgba(239,68,68,.1);border-radius:8px">❌ Error de conexión: ${e.message}</div>`;
@@ -2320,14 +2338,108 @@ async function analyzeScan(){
   };
   reader.readAsDataURL(file);
 }
+
+function renderScanDetail(parsed){
+  const items=Array.isArray(parsed.items)?parsed.items:[];
+  const c=cur();
+  const safeData=JSON.stringify(parsed).replace(/'/g,"&#39;");
+
+  const itemsHtml=items.length?items.map((it,idx)=>`
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);gap:8px">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:.82rem;font-weight:600;overflow:hidden;text-overflow:ellipsis">${it.qty||1}x ${it.name||'—'}</div>
+        <div style="font-size:.68rem;color:var(--text2)">${it.unit?`${it.unit} · `:''}${fmt(it.unitPrice||0,c)} c/u${it.iva?` · IVA ${it.iva}`:''}</div>
+      </div>
+      <div style="font-weight:700;font-size:.85rem;white-space:nowrap">${fmt(it.total||0,c)}</div>
+    </div>`).join(''):'<div style="font-size:.78rem;color:var(--text2);padding:6px 0">No se detectaron productos individuales</div>';
+
+  document.getElementById('scan-result').innerHTML=`
+    <div style="background:var(--bg3);border-radius:8px;padding:13px;margin-bottom:11px">
+      <div style="font-weight:700;font-size:.95rem;margin-bottom:2px">${parsed.merchant||'Establecimiento desconocido'}</div>
+      ${parsed.nit?`<div style="font-size:.7rem;color:var(--text2)">NIT: ${parsed.nit}</div>`:''}
+      ${parsed.address?`<div style="font-size:.7rem;color:var(--text2)">📍 ${parsed.address}</div>`:''}
+      <div style="font-size:.7rem;color:var(--text2);margin-bottom:8px">📅 ${parsed.date||today()} ${parsed.time?`· 🕐 ${parsed.time}`:''} ${parsed.invoiceNumber?`· Fact. ${parsed.invoiceNumber}`:''}</div>
+
+      <div class="ctitle" style="margin-bottom:4px">Productos (${items.length})</div>
+      <div style="max-height:220px;overflow-y:auto;margin-bottom:8px">${itemsHtml}</div>
+
+      ${parsed.subtotal?`<div style="display:flex;justify-content:space-between;font-size:.78rem;color:var(--text2);padding-top:6px;border-top:1px solid var(--border)"><span>Subtotal</span><span>${fmt(parsed.subtotal,c)}</span></div>`:''}
+      ${parsed.totalIva?`<div style="display:flex;justify-content:space-between;font-size:.78rem;color:var(--text2)"><span>IVA</span><span>${fmt(parsed.totalIva,c)}</span></div>`:''}
+      <div style="display:flex;justify-content:space-between;font-size:1rem;font-weight:800;color:var(--accent3);margin-top:4px"><span>TOTAL</span><span>${fmt(parsed.amount||0,c)}</span></div>
+      ${parsed.paymentMethod?`<div style="font-size:.72rem;color:var(--text2);margin-top:6px">💳 Pago: ${parsed.paymentMethod}${parsed.amountReceived?` · Recibido: ${fmt(parsed.amountReceived,c)}`:''}${parsed.change?` · Cambio: ${fmt(parsed.change,c)}`:''}</div>`:''}
+
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+        <div style="font-size:.78rem;margin-bottom:3px"><strong>Categoría:</strong> ${parsed.category||'—'}</div>
+        ${parsed.notes?`<div style="font-size:.72rem;color:var(--text2)">${parsed.notes}</div>`:''}
+      </div>
+    </div>
+    <button class="btn bp btn-full" onclick='useScan(${safeData})'>✅ Usar estos datos</button>
+    <button class="btn bs btn-full" style="margin-top:8px" onclick='viewFullReceipt(${safeData})'>📋 Ver detalle completo</button>`;
+}
+
+window.viewFullReceipt=function(data){
+  const items=Array.isArray(data.items)?data.items:[];
+  const c=cur();
+  const overlay=document.createElement('div');
+  overlay.id='receipt-detail-overlay';
+  overlay.style.cssText='position:fixed;inset:0;z-index:3000;background:rgba(15,13,26,.9);display:flex;align-items:center;justify-content:center;padding:14px';
+  const itemRows=items.map(it=>`
+    <tr>
+      <td style="padding:6px 8px;font-size:.78rem">${it.qty||1}</td>
+      <td style="padding:6px 8px;font-size:.78rem">${it.name||'—'}</td>
+      <td style="padding:6px 8px;font-size:.75rem;color:var(--text2)">${it.unit||''}</td>
+      <td style="padding:6px 8px;font-size:.78rem;text-align:right">${fmt(it.unitPrice||0,c)}</td>
+      <td style="padding:6px 8px;font-size:.72rem;text-align:right;color:var(--text2)">${it.iva||'—'}</td>
+      <td style="padding:6px 8px;font-size:.82rem;font-weight:700;text-align:right">${fmt(it.total||0,c)}</td>
+    </tr>`).join('');
+  overlay.innerHTML=`<div style="background:var(--bg2);border:1.5px solid var(--border);border-radius:var(--radius);padding:20px;max-width:600px;width:100%;max-height:88vh;overflow-y:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <h3 style="font-size:1rem;font-weight:700">📋 ${data.merchant||'Recibo'}</h3>
+      <button onclick="document.getElementById('receipt-detail-overlay').remove()" style="background:none;border:none;font-size:1.3rem;color:var(--text2);cursor:pointer">✕</button>
+    </div>
+    <div style="font-size:.75rem;color:var(--text2);margin-bottom:14px">
+      ${data.nit?`NIT: ${data.nit}<br>`:''}
+      ${data.address?`📍 ${data.address}<br>`:''}
+      📅 ${data.date||''} ${data.time?`· 🕐 ${data.time}`:''} ${data.invoiceNumber?`· Fact. ${data.invoiceNumber}`:''}
+    </div>
+    <div class="tw">
+      <table style="width:100%">
+        <thead><tr style="border-bottom:1.5px solid var(--border)">
+          <th style="padding:6px 8px;text-align:left;font-size:.68rem;color:var(--text2)">CANT</th>
+          <th style="padding:6px 8px;text-align:left;font-size:.68rem;color:var(--text2)">PRODUCTO</th>
+          <th style="padding:6px 8px;text-align:left;font-size:.68rem;color:var(--text2)">UNIDAD</th>
+          <th style="padding:6px 8px;text-align:right;font-size:.68rem;color:var(--text2)">P. UNIT</th>
+          <th style="padding:6px 8px;text-align:right;font-size:.68rem;color:var(--text2)">IVA</th>
+          <th style="padding:6px 8px;text-align:right;font-size:.68rem;color:var(--text2)">TOTAL</th>
+        </tr></thead>
+        <tbody>${itemRows}</tbody>
+      </table>
+    </div>
+    <div style="margin-top:14px;padding-top:14px;border-top:1.5px solid var(--border)">
+      ${data.subtotal?`<div style="display:flex;justify-content:space-between;font-size:.82rem;color:var(--text2);margin-bottom:4px"><span>Subtotal</span><span>${fmt(data.subtotal,c)}</span></div>`:''}
+      ${data.totalIva?`<div style="display:flex;justify-content:space-between;font-size:.82rem;color:var(--text2);margin-bottom:4px"><span>IVA total</span><span>${fmt(data.totalIva,c)}</span></div>`:''}
+      <div style="display:flex;justify-content:space-between;font-size:1.1rem;font-weight:800;color:var(--accent3)"><span>TOTAL</span><span>${fmt(data.amount||0,c)}</span></div>
+      ${data.paymentMethod?`<div style="font-size:.78rem;color:var(--text2);margin-top:8px">💳 ${data.paymentMethod}${data.amountReceived?` · Recibido ${fmt(data.amountReceived,c)}`:''}${data.change?` · Cambio ${fmt(data.change,c)}`:''}</div>`:''}
+    </div>
+    <button class="btn bs btn-full" style="margin-top:14px" onclick="document.getElementById('receipt-detail-overlay').remove()">Cerrar</button>
+  </div>`;
+  document.body.appendChild(overlay);
+};
+
 function useScan(data){
   closeMod('mod-scan');openTxModal();
   setTimeout(()=>{
     document.getElementById('tx-type').value='expense';
     document.getElementById('tx-amt').value=data.amount||'';
-    document.getElementById('tx-desc').value=data.description||'';
+    document.getElementById('tx-desc').value=data.description||(data.merchant?`${data.merchant} - Compra`:'');
     document.getElementById('tx-date').value=data.date||today();
-    document.getElementById('tx-notes').value=data.notes||'';
+    // Build detailed notes including itemized list
+    let notesText=data.notes||'';
+    if(Array.isArray(data.items)&&data.items.length){
+      const itemsList=data.items.map(it=>`${it.qty||1}x ${it.name||''} (${fmt(it.total||0,cur())})`).join(', ');
+      notesText=notesText?`${notesText} | Productos: ${itemsList}`:`Productos: ${itemsList}`;
+    }
+    document.getElementById('tx-notes').value=notesText;
     fillTxCats();
     if(data.category)setTimeout(()=>{document.getElementById('tx-cat').value=data.category},50);
   },200);
