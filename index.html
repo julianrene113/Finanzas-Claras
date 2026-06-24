@@ -759,6 +759,7 @@ input:checked+.tsl::before{transform:translateX(16px)}
       </div>
     </div>
     <div class="mf">
+      <button class="btn bs" id="tx-view-receipt-btn" style="display:none;margin-right:auto" onclick="viewReceiptForCurrentTx()">👁️ Ver recibo</button>
       <button class="btn bs" data-close="mod-tx">Cancelar</button>
       <button class="btn bp" id="btn-save-tx">Guardar</button>
     </div>
@@ -1331,7 +1332,8 @@ function renderRecent(c){
     return`<div style="display:flex;align-items:center;gap:9px;padding:8px 0;border-bottom:1px solid var(--border)">
       <span class="badge ${t.type==='income'?'bi':'be'}">${t.type==='income'?'▲':'▼'}</span>
       <div style="flex:1;min-width:0"><div style="font-size:.84rem;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.description||t.category}</div>
-      <div style="font-size:.7rem;color:var(--text2)">${t.category}${a?` · ${a.emoji} ${a.name}`:''}${t._dist?' <span class="badge ba">💸 Dist</span>':''}</div></div>
+      <div style="font-size:.7rem;color:var(--text2)">${t.category}${a?` · ${a.emoji} ${a.name}`:''}${t._dist?' <span class="badge ba">💸 Dist</span>':''}${t._receiptData?' <span class="badge" style="background:rgba(245,158,11,.15);color:var(--yellow)">📸</span>':''}</div></div>
+      ${t._receiptData?`<button class="btn bic" style="padding:4px 6px;font-size:.7rem" onclick="viewReceiptById('${t.id}')">👁️</button>`:''}
       <div style="font-weight:700;color:${t.type==='income'?'var(--green)':'var(--red)'};white-space:nowrap">${t.type==='income'?'+':'-'}${fmt(t.amount,t.currency||c)}</div>
     </div>`;
   }).join('');
@@ -1346,6 +1348,9 @@ function fillTxCats(){
 
 function openTxModal(id){
   const t=id?D.transactions.find(x=>x.id===id):null;
+  // Clear any stale pending receipt data unless useScan just set it (within the last second)
+  if(!window._scanJustTriggered)window._pendingReceiptData=null;
+  window._scanJustTriggered=false;
   document.getElementById('tx-id').value=t?.id||'';
   document.getElementById('mtx-title').textContent=t?'Editar transacción':'Nueva transacción';
   document.getElementById('tx-type').value=t?.type||'expense';
@@ -1357,6 +1362,12 @@ function openTxModal(id){
   document.getElementById('tx-acc').innerHTML=D.accounts.map(a=>`<option value="${a.id}" ${a.id===(t?.accountId||D.accounts[0]?.id)?'selected':''}>${a.emoji} ${a.name}</option>`).join('');
   fillTxCats();
   if(t?.category)document.getElementById('tx-cat').value=t.category;
+  // Show "Ver recibo" button if this transaction has receipt data
+  const viewBtn=document.getElementById('tx-view-receipt-btn');
+  if(viewBtn){
+    if(t?._receiptData)viewBtn.style.display='inline-flex';
+    else viewBtn.style.display='none';
+  }
   openMod('mod-tx');
 }
 
@@ -1374,6 +1385,8 @@ async function saveTx(){
   if(!accountId){toast('Selecciona una cuenta','e');return}
   const existing=D.transactions.find(x=>x.id===id);
   const tx={id,type,amount,category,description,date,notes,currency,accountId,timestamp:existing?.timestamp||Date.now()};
+  if(window._pendingReceiptData){tx._receiptData=window._pendingReceiptData;window._pendingReceiptData=null}
+  else if(existing?._receiptData){tx._receiptData=existing._receiptData}
   const isNew=!existing;
   const idx=D.transactions.findIndex(x=>x.id===id);
   if(idx>=0)D.transactions[idx]=tx;else D.transactions.push(tx);
@@ -1433,11 +1446,13 @@ function renderTx(){
               ${t._linkedDebtId?`<span class="badge by" style="font-size:.6rem">💳 → ${t._linkedDebtName||'Deuda'}</span>`:''}
               ${t._linkedGoalId?`<span class="badge" style="font-size:.6rem;background:rgba(168,85,247,.15);color:var(--accent3)">🎯 → ${t._linkedGoalName||'Meta'}</span>`:''}
               ${t._dist&&!t._recurringPayment?'<span class="badge ba" style="font-size:.6rem">💸 Dist</span>':''}
+              ${t._receiptData?'<span class="badge" style="font-size:.6rem;background:rgba(245,158,11,.15);color:var(--yellow)">📸 Recibo</span>':''}
             </div>
           </div>
           <div style="text-align:right;flex-shrink:0">
             <div style="font-weight:700;font-size:.9rem;color:${t.type==='income'?'var(--green)':'var(--red)'}">${t.type==='income'?'+':'-'}${fmt(t.amount,t.currency||c)}</div>
             <div style="display:flex;gap:4px;justify-content:flex-end;margin-top:4px">
+              ${t._receiptData?`<button class="btn bic" style="padding:4px 6px;font-size:.7rem" onclick="viewReceiptById('${t.id}')">👁️</button>`:''}
               <button class="btn bic" style="padding:4px 6px;font-size:.7rem" onclick="openTxModal('${t.id}')">✏️</button>
               <button class="btn bic" style="padding:4px 6px;font-size:.7rem" onclick="deleteTx('${t.id}')">🗑️</button>
             </div>
@@ -2426,7 +2441,22 @@ window.viewFullReceipt=function(data){
   document.body.appendChild(overlay);
 };
 
+window.viewReceiptForCurrentTx=function(){
+  const id=document.getElementById('tx-id').value;
+  const t=D.transactions.find(x=>x.id===id);
+  if(t?._receiptData)viewFullReceipt(t._receiptData);
+  else toast('No hay recibo guardado para esta transacción','e');
+};
+
+window.viewReceiptById=function(id){
+  const t=D.transactions.find(x=>x.id===id);
+  if(t?._receiptData)viewFullReceipt(t._receiptData);
+  else toast('No hay recibo guardado para esta transacción','e');
+};
+
 function useScan(data){
+  window._pendingReceiptData=data;
+  window._scanJustTriggered=true;
   closeMod('mod-scan');openTxModal();
   setTimeout(()=>{
     document.getElementById('tx-type').value='expense';
