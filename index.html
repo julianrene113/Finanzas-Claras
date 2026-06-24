@@ -51,7 +51,8 @@ textarea{resize:vertical;min-height:68px}
 .topbar{height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 20px;background:var(--bg2);border-bottom:1.5px solid var(--border);position:sticky;top:0;z-index:90;gap:10px}
 .topbar-title{font-size:.95rem;font-weight:700}
 .topbar-right{display:flex;gap:8px;align-items:center}
-#content{padding:20px;flex:1}
+#content{padding:20px;flex:1;max-width:100%;overflow-x:hidden}
+#content .card,#content .mc,#tx-list,#d-recent{max-width:100%;overflow-x:hidden}
 .sec{display:none}.sec.active{display:block}
 
 /* CARDS */
@@ -154,7 +155,8 @@ input:checked+.tsl::before{transform:translateX(16px)}
 .empty p{font-size:.8rem}
 
 /* FILTER BAR */
-.fb{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:15px;align-items:center}
+.fb{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:15px;align-items:center;max-width:100%}
+.fb select{min-width:0;flex-shrink:1}
 .fb input,.fb select{width:auto;flex:1;min-width:110px}
 .si{position:relative;flex:1;min-width:150px}
 .si input{padding-left:30px}
@@ -1434,27 +1436,29 @@ function renderTx(){
       ${items.map(t=>{
         const a=D.accounts.find(x=>x.id===t.accountId);
         const timeStr=t.timestamp?new Date(t.timestamp).toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'}):'';
-        return`<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid rgba(46,42,69,.5)">
-          <div style="width:36px;height:36px;border-radius:50%;background:${t.type==='income'?'rgba(34,197,94,.15)':'rgba(239,68,68,.15)'};display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:.9rem">${t.type==='income'?'▲':'▼'}</div>
-          <div style="flex:1;min-width:0">
-            <div style="font-size:.86rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.description||t.category}</div>
-            <div style="font-size:.72rem;color:var(--text2);display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:2px">
-              <span class="badge ${t.type==='income'?'bi':'be'}" style="font-size:.63rem">${t.category}</span>
-              ${a?`<span>${a.emoji} ${a.name}</span>`:''}
-              ${timeStr?`<span style="opacity:.7">🕐 ${timeStr}</span>`:''}
-              ${t._recurringPayment?`<span class="badge ba" style="font-size:.6rem">🔄 Recurrente</span>`:''}
-              ${t._linkedDebtId?`<span class="badge by" style="font-size:.6rem">💳 → ${t._linkedDebtName||'Deuda'}</span>`:''}
-              ${t._linkedGoalId?`<span class="badge" style="font-size:.6rem;background:rgba(168,85,247,.15);color:var(--accent3)">🎯 → ${t._linkedGoalName||'Meta'}</span>`:''}
-              ${t._dist&&!t._recurringPayment?'<span class="badge ba" style="font-size:.6rem">💸 Dist</span>':''}
-              ${t._receiptData?'<span class="badge" style="font-size:.6rem;background:rgba(245,158,11,.15);color:var(--yellow)">📸 Recibo</span>':''}
+        return`<div style="display:flex;align-items:flex-start;gap:8px;padding:9px 0;border-bottom:1px solid rgba(46,42,69,.5);min-width:0;max-width:100%">
+          <div style="width:32px;height:32px;border-radius:50%;background:${t.type==='income'?'rgba(34,197,94,.15)':'rgba(239,68,68,.15)'};display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:.85rem;margin-top:1px">${t.type==='income'?'▲':'▼'}</div>
+          <div style="flex:1;min-width:0;overflow:hidden">
+            <div style="font-size:.84rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%">${t.description||t.category}</div>
+            <div style="font-size:.68rem;color:var(--text2);display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-top:3px;max-width:100%">
+              <span class="badge ${t.type==='income'?'bi':'be'}" style="font-size:.6rem">${t.category}</span>
+              ${a?`<span style="white-space:nowrap">${a.emoji} ${a.name}</span>`:''}
+              ${timeStr?`<span style="opacity:.7;white-space:nowrap">🕐 ${timeStr}</span>`:''}
             </div>
+            ${(t._recurringPayment||t._linkedDebtId||t._linkedGoalId||(t._dist&&!t._recurringPayment)||t._receiptData)?`<div style="font-size:.68rem;display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-top:3px;max-width:100%">
+              ${t._recurringPayment?`<span class="badge ba" style="font-size:.58rem">🔄 Recurrente</span>`:''}
+              ${t._linkedDebtId?`<span class="badge by" style="font-size:.58rem;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block">💳 ${t._linkedDebtName||'Deuda'}</span>`:''}
+              ${t._linkedGoalId?`<span class="badge" style="font-size:.58rem;background:rgba(168,85,247,.15);color:var(--accent3);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block">🎯 ${t._linkedGoalName||'Meta'}</span>`:''}
+              ${t._dist&&!t._recurringPayment?'<span class="badge ba" style="font-size:.58rem">💸 Dist</span>':''}
+              ${t._receiptData?'<span class="badge" style="font-size:.58rem;background:rgba(245,158,11,.15);color:var(--yellow)">📸</span>':''}
+            </div>`:''}
           </div>
           <div style="text-align:right;flex-shrink:0">
-            <div style="font-weight:700;font-size:.9rem;color:${t.type==='income'?'var(--green)':'var(--red)'}">${t.type==='income'?'+':'-'}${fmt(t.amount,t.currency||c)}</div>
-            <div style="display:flex;gap:4px;justify-content:flex-end;margin-top:4px">
-              ${t._receiptData?`<button class="btn bic" style="padding:4px 6px;font-size:.7rem" onclick="viewReceiptById('${t.id}')">👁️</button>`:''}
-              <button class="btn bic" style="padding:4px 6px;font-size:.7rem" onclick="openTxModal('${t.id}')">✏️</button>
-              <button class="btn bic" style="padding:4px 6px;font-size:.7rem" onclick="deleteTx('${t.id}')">🗑️</button>
+            <div style="font-weight:700;font-size:.86rem;color:${t.type==='income'?'var(--green)':'var(--red)'};white-space:nowrap">${t.type==='income'?'+':'-'}${fmt(t.amount,t.currency||c)}</div>
+            <div style="display:flex;gap:3px;justify-content:flex-end;margin-top:4px">
+              ${t._receiptData?`<button class="btn bic" style="padding:3px 5px;font-size:.65rem" onclick="viewReceiptById('${t.id}')">👁️</button>`:''}
+              <button class="btn bic" style="padding:3px 5px;font-size:.65rem" onclick="openTxModal('${t.id}')">✏️</button>
+              <button class="btn bic" style="padding:3px 5px;font-size:.65rem" onclick="deleteTx('${t.id}')">🗑️</button>
             </div>
           </div>
         </div>`;
