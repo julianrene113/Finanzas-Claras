@@ -594,8 +594,8 @@ input:checked+.tsl::before{transform:translateX(16px)}
             <div class="fg"><label>Plazo (meses)</label><input type="number" id="sim-months" placeholder="24"></div>
           </div>
           <button class="btn bp btn-full" id="btn-simulate">Calcular</button>
-          <div id="sim-result" style="margin-top:14px"></div>
         </div>
+        <div id="sim-result" style="margin-top:14px"></div>
       </div>
 
       <!-- SPLIT -->
@@ -2768,21 +2768,88 @@ function renderAchievements(){
 }
 
 // ── SIMULATOR ──
+let simLastResult=null;
+const SIM_PAGE_SIZE=6;
+let simShownRows=SIM_PAGE_SIZE;
+
 function runSim(){
   const amt=parseFloat(document.getElementById('sim-amt').value)||0;
   const rate=parseFloat(document.getElementById('sim-rate').value)||0;
   const months=parseInt(document.getElementById('sim-months').value)||0;
-  if(!amt||!rate||!months){document.getElementById('sim-result').innerHTML='<div class="cm" style="font-size:.83rem">Completa todos los campos</div>';return}
-  const c=cur(),mr=rate/100/12;
+  if(!amt||!rate||!months){document.getElementById('sim-result').innerHTML='<div class="cm" style="font-size:.83rem">Completa todos los campos</div>';simLastResult=null;return}
+  const mr=rate/100/12;
   const pmt=amt*(mr*Math.pow(1+mr,months))/(Math.pow(1+mr,months)-1);
   const total=pmt*months,interest=total-amt;
+
+  // tabla de amortización completa
+  let saldo=amt;
+  const rows=[];
+  for(let i=1;i<=months;i++){
+    const interesC=saldo*mr;
+    const capitalC=pmt-interesC;
+    saldo=Math.max(0,saldo-capitalC);
+    rows.push({n:i,valor:pmt,capital:capitalC,interes:interesC,saldo});
+  }
+
+  simLastResult={amt,rate,months,pmt,total,interest,rows};
+  simShownRows=SIM_PAGE_SIZE;
+  renderSimResult();
+}
+
+function renderSimResult(){
+  if(!simLastResult)return;
+  const c=cur(),{amt,rate,months,pmt,total,interest,rows}=simLastResult;
+  const costoDinero=Math.round((interest/amt)*1000)/10;
+  const visibleRows=rows.slice(0,simShownRows);
   document.getElementById('sim-result').innerHTML=`
-    <div class="g2" style="margin-top:6px">
+    <div class="g2" style="margin-bottom:14px">
       <div class="mc pg"><div class="lbl">Cuota mensual</div><div class="val ca" style="font-size:1.15rem">${fmt(Math.round(pmt),c)}</div></div>
       <div class="mc"><div class="lbl">Total a pagar</div><div class="val" style="font-size:1.15rem">${fmt(Math.round(total),c)}</div></div>
       <div class="mc rg"><div class="lbl">Total intereses</div><div class="val cr" style="font-size:1.15rem">${fmt(Math.round(interest),c)}</div></div>
-      <div class="mc"><div class="lbl">Costo del dinero</div><div class="val" style="font-size:1.15rem">${Math.round((interest/amt)*100)}%</div></div>
-    </div>`;
+      <div class="mc"><div class="lbl">Costo del dinero</div><div class="val" style="font-size:1.15rem">${costoDinero}%</div></div>
+    </div>
+    <div class="card" style="margin-bottom:14px">
+      <div class="ctitle">Tabla de amortización (${months} cuotas)</div>
+      <div class="tw" style="margin-top:10px">
+        <table style="width:100%">
+          <thead><tr style="border-bottom:1.5px solid var(--border)">
+            <th style="padding:6px 8px;text-align:left;font-size:.68rem;color:var(--text2)">CUOTA</th>
+            <th style="padding:6px 8px;text-align:right;font-size:.68rem;color:var(--text2)">VALOR</th>
+            <th style="padding:6px 8px;text-align:right;font-size:.68rem;color:var(--text2)">CAPITAL</th>
+            <th style="padding:6px 8px;text-align:right;font-size:.68rem;color:var(--text2)">INTERÉS</th>
+            <th style="padding:6px 8px;text-align:right;font-size:.68rem;color:var(--text2)">SALDO</th>
+          </tr></thead>
+          <tbody>${visibleRows.map(r=>`
+            <tr style="border-bottom:1px solid var(--border)">
+              <td style="padding:6px 8px;font-size:.78rem;font-weight:600">${r.n}</td>
+              <td style="padding:6px 8px;text-align:right;font-size:.78rem">${fmt(Math.round(r.valor),c)}</td>
+              <td style="padding:6px 8px;text-align:right;font-size:.78rem">${fmt(Math.round(r.capital),c)}</td>
+              <td style="padding:6px 8px;text-align:right;font-size:.78rem;color:var(--red)">${fmt(Math.round(r.interes),c)}</td>
+              <td style="padding:6px 8px;text-align:right;font-size:.78rem;color:var(--text2)">${fmt(Math.round(r.saldo),c)}</td>
+            </tr>`).join('')}</tbody>
+        </table>
+      </div>
+      ${simShownRows<rows.length?`<button class="btn bs bsm btn-full" style="margin-top:10px" onclick="simShowMoreRows()">Ver más</button>`:''}
+    </div>
+    <button class="btn bp btn-full" onclick="openSimAsDebt()">➕ Agregar como deuda</button>`;
+}
+
+function simShowMoreRows(){
+  simShownRows+=12;
+  renderSimResult();
+}
+
+function openSimAsDebt(){
+  if(!simLastResult){toast('Calcula primero el crédito','e');return}
+  const {amt,rate,months,pmt}=simLastResult;
+  openDebtModal(); // abre como "Nueva deuda" vacía, ya con el modal correcto
+  document.getElementById('dbt-name').value='Crédito simulado';
+  document.getElementById('dbt-type').value='prestamo';
+  document.getElementById('dbt-total').value=Math.round(amt);
+  document.getElementById('dbt-rem').value=Math.round(amt);
+  document.getElementById('dbt-rate').value=rate;
+  document.getElementById('dbt-mpay').value=Math.round(pmt);
+  toast('Revisa los datos y ponle un nombre antes de guardar','w');
 }
 
 // ── SPLIT ──
@@ -2853,6 +2920,14 @@ window.toggleCurrPicker=toggleCurrPicker;
 window.downloadJSON=downloadJSON;
 window.deleteAllData=deleteAllData;
 window.showCalDay=showCalDay;
+window.dpUseIncome=dpUseIncome;
+window.dpSetTemplate=dpSetTemplate;
+window.renderDistPctResult=renderDistPctResult;
+window.dpOnSliderInput=dpOnSliderInput;
+window.dpOnRangeInput=dpOnRangeInput;
+window.openDistPctExecModal=openDistPctExecModal;
+window.simShowMoreRows=simShowMoreRows;
+window.openSimAsDebt=openSimAsDebt;
 
 </script>
 </body>
