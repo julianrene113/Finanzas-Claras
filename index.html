@@ -2262,8 +2262,8 @@ const DP_TEMPLATES={
   '602020':{label:'60/20/20 costo de vida alto',pcts:{nec:60,des:20,aho:20}},
   'custom':{label:'Personalizado',pcts:{nec:50,des:30,aho:20}}
 };
-let dpTemplate=S.dpTemplate||'503020';
-let dpPcts={...DP_TEMPLATES[dpTemplate].pcts,...(S.dpPcts||{})};
+let dpTemplate=(S.dpTemplate&&DP_TEMPLATES[S.dpTemplate])?S.dpTemplate:'503020';
+let dpPcts={...DP_TEMPLATES[dpTemplate].pcts,...(S.dpPcts&&typeof S.dpPcts==='object'?S.dpPcts:{})};
 
 function dpMonthIncome(){
   return D.transactions.filter(t=>t.type==='income'&&mk(t.date)===cm()&&t.category!=='🔀 Transferencia').reduce((s,t)=>s+(t.amount||0),0);
@@ -2310,11 +2310,11 @@ function dpRenderSliders(){
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
         <div style="font-size:.83rem;font-weight:600">${r.label}</div>
         <div style="display:flex;align-items:center;gap:4px">
-          <input type="number" min="0" max="100" id="dp-pct-${r.key}" value="${dpPcts[r.key]}" ${isCustom?'':'disabled'} style="width:58px;text-align:right;padding:5px 7px;font-size:.8rem" oninput="dpOnSliderInput('${r.key}')">
+          <input type="number" min="0" max="100" id="dp-pct-${r.key}" value="${dpPcts[r.key]||0}" ${isCustom?'':'disabled'} style="width:58px;text-align:right;padding:5px 7px;font-size:.8rem" oninput="dpOnSliderInput('${r.key}')">
           <span style="font-size:.8rem;color:var(--text2)">%</span>
         </div>
       </div>
-      <input type="range" min="0" max="100" id="dp-range-${r.key}" value="${dpPcts[r.key]}" ${isCustom?'':'disabled'} style="width:100%" oninput="dpOnRangeInput('${r.key}')">
+      <input type="range" min="0" max="100" id="dp-range-${r.key}" value="${dpPcts[r.key]||0}" ${isCustom?'':'disabled'} style="width:100%" oninput="dpOnRangeInput('${r.key}')">
       <div style="font-size:.68rem;color:var(--text2);margin-top:2px">${r.hint}</div>
     </div>`).join('');
 }
