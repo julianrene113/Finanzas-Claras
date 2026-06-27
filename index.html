@@ -247,6 +247,14 @@ input:checked+.tsl::before{transform:translateX(16px)}
 .dri:active{background:rgba(var(--accent-rgb),.15);border-color:var(--accent)}
 .dri .dicon{font-size:1.35rem}.dri .dlbl{font-size:.66rem;font-weight:600;color:var(--text2);text-align:center}
 
+#menu-order-list{display:flex;flex-direction:column;gap:6px;touch-action:none}
+.moe-item{display:flex;align-items:center;gap:10px;padding:9px 11px;background:var(--bg3);border:1.5px solid var(--border);border-radius:var(--rsm);user-select:none;touch-action:none;transition:background var(--T),border-color var(--T)}
+.moe-handle{font-size:1rem;color:var(--text2);cursor:grab;line-height:1}
+.moe-icon{font-size:1.1rem}
+.moe-label{font-size:.82rem;font-weight:500;flex:1}
+.moe-item.moe-dragging{background:rgba(var(--accent-rgb),.15);border-color:var(--accent);box-shadow:0 8px 20px rgba(0,0,0,.25)}
+.moe-placeholder{height:0;border:1.5px dashed rgba(var(--accent-rgb),.4);border-radius:var(--rsm);background:rgba(var(--accent-rgb),.06)}
+
 /* RESPONSIVE */
 @media(max-width:768px){
   #sidebar{transform:translateX(-100%)}
@@ -614,6 +622,12 @@ input:checked+.tsl::before{transform:translateX(16px)}
       <div id="sec-settings" class="sec">
         <div class="sh"><h2>⚙️ Ajustes</h2></div>
         <div class="g2">
+          <div class="card" style="grid-column:span 2">
+            <div class="ctitle">📋 Personalizar menú "Más"</div>
+            <p class="fhint" style="margin-bottom:10px">Mantén presionado un ítem para activar el modo de reordenar, luego arrástralo a la posición que quieras.</p>
+            <div id="menu-order-list"></div>
+            <button class="btn bs bsm" style="margin-top:10px" id="btn-menu-order-reset">↺ Restaurar orden por defecto</button>
+          </div>
           <div class="card"><div class="ctitle">Idioma</div>
             <select id="set-lang" style="font-size:.9rem">
               <option value="es">🇨🇴 Español</option>
@@ -686,13 +700,14 @@ input:checked+.tsl::before{transform:translateX(16px)}
     <div class="drb" id="dr-back"></div>
     <div class="drp">
       <div class="drh"></div>
-      <div class="drg">
+      <div class="drg" id="dr-items-container">
         <div class="dri" data-dr="budgets"><span class="dicon">💰</span><span class="dlbl">Presupuestos</span></div>
         <div class="dri" data-dr="debts"><span class="dicon">💳</span><span class="dlbl">Deudas</span></div>
         <div class="dri" data-dr="goals"><span class="dicon">🎯</span><span class="dlbl">Metas</span></div>
         <div class="dri" data-dr="recurring"><span class="dicon">🔄</span><span class="dlbl">Recurrentes</span></div>
         <div class="dri" data-dr="currency"><span class="dicon">💱</span><span class="dlbl">Divisas</span></div>
         <div class="dri" data-dr="reports"><span class="dicon">📈</span><span class="dlbl">Reportes</span></div>
+        <div class="dri" data-dr="distpct"><span class="dicon">📐</span><span class="dlbl">Distribución %</span></div>
         <div class="dri" data-dr="advisor"><span class="dicon">🤖</span><span class="dlbl">Asesor IA</span></div>
         <div class="dri" data-dr="calendar"><span class="dicon">📆</span><span class="dlbl">Calendario</span></div>
         <div class="dri" data-dr="achievements"><span class="dicon">🏆</span><span class="dlbl">Logros</span></div>
@@ -1192,6 +1207,7 @@ function goTo(sec){
   if(sec==='calendar')renderCal();
   if(sec==='reports')renderReports();
   if(sec==='distpct')renderDistPct();
+  if(sec==='settings')renderMenuOrderEditor();
 }
 // Sidebar nav clicks
 document.getElementById('sb-nav').querySelectorAll('.ni[data-sec]').forEach(n=>{
@@ -1289,6 +1305,7 @@ function initApp(){
   document.getElementById('btn-logout2').onclick=doLogout;
   document.getElementById('btn-download-json').onclick=downloadJSON;
   document.getElementById('btn-delete-all').onclick=deleteAllData;
+  document.getElementById('btn-menu-order-reset').onclick=resetMenuOrder;
   document.getElementById('btn-save-couple').onclick=()=>{
     const v=parseFloat(document.getElementById('set-couple-income').value)||0;
     localStorage.setItem('coupleIncome',v);
@@ -1315,7 +1332,7 @@ async function doLogout(){
 function renderAll(){
   renderDashboard();renderTx();renderBudgets();renderDebts();renderGoals();
   renderRecurring();renderAccounts();renderAchievements();
-  fillAllCurs();applySettings();
+  fillAllCurs();applySettings();applyMenuOrder();
 }
 function fillAllCurs(){
   const s=cur();
@@ -1325,6 +1342,140 @@ function fillAllCurs(){
 function applySettings(){
   const sl=document.getElementById('set-lang');if(sl)sl.value=S.lang||'es';
   const ci=document.getElementById('set-couple-income');if(ci)ci.value=localStorage.getItem('coupleIncome')||'';
+}
+
+// ── MENÚ "MÁS" PERSONALIZABLE (long-press + drag para reordenar) ──
+const MENU_ITEM_DEFAULT_ORDER=['budgets','debts','goals','recurring','currency','reports','distpct','advisor','calendar','achievements','simulator','split','settings','dr-dist','dr-scan','dr-theme','dr-logout'];
+
+function getMenuItemId(el){return el.dataset.dr||el.id}
+
+function getMenuOrder(){
+  const saved=Array.isArray(S.menuOrder)?S.menuOrder:[];
+  // Filtra ids inválidos y agrega al final los que falten (ej. ítems nuevos agregados después)
+  const valid=saved.filter(id=>MENU_ITEM_DEFAULT_ORDER.includes(id));
+  const missing=MENU_ITEM_DEFAULT_ORDER.filter(id=>!valid.includes(id));
+  const result=[...valid,...missing];
+  return result.length?result:[...MENU_ITEM_DEFAULT_ORDER];
+}
+
+function saveMenuOrder(order){
+  S.menuOrder=order;fsSaveSetting();
+}
+
+function applyMenuOrderToContainer(container,order){
+  const items={};
+  container.querySelectorAll('.dri').forEach(el=>{items[getMenuItemId(el)]=el});
+  order.forEach(id=>{if(items[id])container.appendChild(items[id])});
+}
+
+function applyMenuOrder(){
+  const container=document.getElementById('dr-items-container');
+  if(container)applyMenuOrderToContainer(container,getMenuOrder());
+}
+
+function resetMenuOrder(){
+  saveMenuOrder([...MENU_ITEM_DEFAULT_ORDER]);
+  applyMenuOrder();
+  renderMenuOrderEditor();
+  toast('Orden restaurado','w');
+}
+
+function renderMenuOrderEditor(){
+  const list=document.getElementById('menu-order-list');
+  if(!list)return;
+  const order=getMenuOrder();
+  const labels={};
+  document.querySelectorAll('#dr-items-container .dri').forEach(el=>{
+    labels[getMenuItemId(el)]={icon:el.querySelector('.dicon')?.textContent||'•',label:el.querySelector('.dlbl')?.textContent||el.id};
+  });
+  list.innerHTML=order.map(id=>{
+    const info=labels[id]||{icon:'•',label:id};
+    return `<div class="moe-item" data-id="${id}">
+      <span class="moe-handle">⠿</span>
+      <span class="moe-icon">${info.icon}</span>
+      <span class="moe-label">${info.label}</span>
+    </div>`;
+  }).join('');
+  if(!list.dataset.dragBound){
+    list.dataset.dragBound='1';
+    bindMenuOrderDrag(list,(newOrder)=>{
+      saveMenuOrder(newOrder);
+      applyMenuOrder();
+    });
+  }
+}
+
+// Lógica genérica de long-press + drag con Pointer Events (sirve tanto para el editor en Ajustes
+// como, si se quisiera en el futuro, directo en el drawer). Mantiene presionado 350ms antes de
+// habilitar el arrastre, para no interferir con el scroll normal de la lista.
+function bindMenuOrderDrag(container,onReorder){
+  let pressTimer=null,dragging=null,startY=0,placeholder=null;
+
+  const items=()=>Array.from(container.querySelectorAll('.moe-item'));
+
+  function clearPress(){clearTimeout(pressTimer);pressTimer=null}
+
+  function startDrag(el,clientY){
+    dragging=el;
+    startY=clientY;
+    el.classList.add('moe-dragging');
+    placeholder=document.createElement('div');
+    placeholder.className='moe-placeholder';
+    placeholder.style.height=el.offsetHeight+'px';
+    el.after(placeholder);
+    el.style.position='relative';
+    el.style.zIndex='10';
+    if(navigator.vibrate)navigator.vibrate(8);
+  }
+
+  function moveDrag(clientY){
+    if(!dragging)return;
+    const dy=clientY-startY;
+    dragging.style.transform=`translateY(${dy}px)`;
+    const all=items().filter(i=>i!==dragging);
+    const draggingRect=dragging.getBoundingClientRect();
+    const draggingMid=draggingRect.top+draggingRect.height/2;
+    let target=null,after=false;
+    for(const it of all){
+      if(it.classList.contains('moe-placeholder-anchor'))continue;
+      const r=it.getBoundingClientRect();
+      const mid=r.top+r.height/2;
+      if(draggingMid<mid){target=it;after=false;break}
+      target=it;after=true;
+    }
+    if(target&&target!==placeholder){
+      if(after)target.after(placeholder);else target.before(placeholder);
+    }
+  }
+
+  function endDrag(){
+    if(!dragging)return;
+    dragging.style.transform='';
+    dragging.style.position='';
+    dragging.style.zIndex='';
+    dragging.classList.remove('moe-dragging');
+    if(placeholder){placeholder.replaceWith(dragging);placeholder=null}
+    dragging=null;
+    onReorder(items().map(i=>i.dataset.id));
+  }
+
+  container.addEventListener('pointerdown',e=>{
+    const item=e.target.closest('.moe-item');
+    if(!item)return;
+    clearPress();
+    const pid=e.pointerId;
+    pressTimer=setTimeout(()=>{
+      item.setPointerCapture?.(pid);
+      startDrag(item,e.clientY);
+    },350);
+  });
+  container.addEventListener('pointermove',e=>{
+    if(dragging){moveDrag(e.clientY);e.preventDefault()}
+    else if(pressTimer&&Math.abs(e.movementY||0)>6){clearPress()} // se movió antes de tiempo (scroll) -> cancela long-press
+  },{passive:false});
+  container.addEventListener('pointerup',()=>{clearPress();endDrag()});
+  container.addEventListener('pointercancel',()=>{clearPress();endDrag()});
+  container.addEventListener('pointerleave',e=>{if(!dragging)clearPress()});
 }
 
 // ── DASHBOARD ──
