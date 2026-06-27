@@ -332,6 +332,7 @@ input:checked+.tsl::before{transform:translateX(16px)}
       <div class="ni" data-sec="accounts"><span class="icon">🏦</span><span class="lbl">Cuentas</span></div>
       <div class="ni" data-sec="currency"><span class="icon">💱</span><span class="lbl">Divisas</span></div>
       <div class="ni" data-sec="reports"><span class="icon">📈</span><span class="lbl">Reportes</span></div>
+      <div class="ni" data-sec="distpct"><span class="icon">📐</span><span class="lbl">Distribución %</span></div>
       <div class="ni" data-sec="advisor"><span class="icon">🤖</span><span class="lbl">Asesor IA</span></div>
       <div class="ni" data-sec="calendar"><span class="icon">📆</span><span class="lbl">Calendario</span></div>
       <div class="ni" data-sec="achievements"><span class="icon">🏆</span><span class="lbl">Logros</span></div>
@@ -485,6 +486,48 @@ input:checked+.tsl::before{transform:translateX(16px)}
         <div class="g4" id="rep-metrics" style="margin-bottom:16px"></div>
       <div class="card" style="margin-bottom:16px"><div class="ctitle">Capacidad de Pago</div><div id="rep-cap"></div></div>
         <div class="card"><div class="ctitle">Gastos por categoría</div><div id="rep-cats" style="margin-top:10px"></div></div>
+      </div>
+
+      <!-- DISTRIBUCIÓN POR % -->
+      <div id="sec-distpct" class="sec">
+        <div class="sh"><h2>📐 Distribución %</h2></div>
+
+        <div class="card" style="margin-bottom:16px">
+          <div class="ctitle">Monto a distribuir</div>
+          <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:6px">
+            <div style="flex:1;min-width:160px">
+              <label style="font-size:.7rem;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px">Monto</label>
+              <input type="number" id="dp-amount" placeholder="0" oninput="renderDistPctResult()">
+            </div>
+            <button class="btn bs bsm" onclick="dpUseIncome()" style="margin-bottom:1px">↺ Usar mi ingreso del mes</button>
+          </div>
+          <div style="font-size:.7rem;color:var(--text2)">Por defecto se calcula sobre tus ingresos de este mes (sin contar transferencias). Puedes editarlo.</div>
+        </div>
+
+        <div class="card" style="margin-bottom:16px">
+          <div class="ctitle">Plantilla de distribución</div>
+          <div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px">
+            <button class="btn bs bsm dp-tpl-btn" data-tpl="503020" onclick="dpSetTemplate('503020')">50/30/20 — estándar</button>
+            <button class="btn bs bsm dp-tpl-btn" data-tpl="702010" onclick="dpSetTemplate('702010')">70/20/10 — alta deuda</button>
+            <button class="btn bs bsm dp-tpl-btn" data-tpl="602020" onclick="dpSetTemplate('602020')">60/20/20 — costo de vida alto</button>
+            <button class="btn bs bsm dp-tpl-btn" data-tpl="custom" onclick="dpSetTemplate('custom')">🎛️ Personalizado</button>
+          </div>
+          <div id="dp-sliders"></div>
+          <div id="dp-sum-warning" style="font-size:.74rem;color:var(--red);margin-top:6px;display:none">⚠️ Los porcentajes deben sumar 100%. Actual: <span id="dp-sum-val"></span>%</div>
+        </div>
+
+        <div class="g3" id="dp-breakdown" style="margin-bottom:16px"></div>
+
+        <div class="card" style="margin-bottom:16px">
+          <div class="ctitle">¿Soy apto para un nuevo compromiso/deuda?</div>
+          <div id="dp-capacity"></div>
+        </div>
+
+        <div class="card">
+          <div class="ctitle">Separar este dinero ahora</div>
+          <div style="font-size:.78rem;color:var(--text2);margin-bottom:12px">Asigna el monto de <strong>Ahorro y deudas</strong> a tus metas, deudas o fondos recurrentes reales — igual que en "Distribuir ingreso", pero ya calculado por porcentaje.</div>
+          <button class="btn bp" id="btn-dp-execute" onclick="openDistPctExecModal()">💸 Separar ahorro/deudas ahora</button>
+        </div>
       </div>
 
       <!-- ASESOR IA -->
@@ -902,10 +945,12 @@ input:checked+.tsl::before{transform:translateX(16px)}
 </div>
 
 <!-- MODAL DISTRIBUIR -->
+<!-- MODAL DISTRIBUIR (reutilizado también por Distribución % para ejecutar el reparto) -->
 <div class="mo" id="mod-dist">
   <div class="modal" style="max-width:560px">
     <div class="mh">💸 Distribuir ingreso<button class="mc-btn" data-close="mod-dist">✕</button></div>
     <div class="mb">
+      <div id="dist-from-pct-banner" style="display:none;font-size:.74rem;background:rgba(var(--accent-rgb),.1);color:var(--accent3);border:1px solid rgba(var(--accent-rgb),.25);border-radius:var(--rsm);padding:8px 11px;margin-bottom:14px">📐 Montos sugeridos según tu distribución por %. Puedes ajustarlos antes de confirmar.</div>
       <div style="margin-bottom:14px"><div class="ctitle">Cuenta fuente</div><div class="acs" id="dist-acs"></div></div>
       <div class="ds"><div class="dst">🏦 Transferir a cuenta</div><div id="dist-accs"></div></div>
       <div class="ds"><div class="dst">🎯 Metas de ahorro</div><div id="dist-goals"></div></div>
@@ -1133,7 +1178,7 @@ document.querySelectorAll('[data-close]').forEach(btn=>{btn.onclick=()=>closeMod
 document.querySelectorAll('.mo').forEach(mo=>{mo.addEventListener('click',e=>{if(e.target===mo)closeMod(mo.id)})});
 
 // ── NAVIGATION ──
-const SEC_TITLES={dashboard:'📊 Dashboard',transactions:'💸 Transacciones',budgets:'💰 Presupuestos',debts:'💳 Deudas',goals:'🎯 Metas',recurring:'🔄 Recurrentes',accounts:'🏦 Cuentas',currency:'💱 Divisas',reports:'📈 Reportes',advisor:'🤖 Asesor IA',calendar:'📆 Calendario',achievements:'🏆 Logros',simulator:'🧮 Simulador',split:'✂️ Split',settings:'⚙️ Ajustes'};
+const SEC_TITLES={dashboard:'📊 Dashboard',transactions:'💸 Transacciones',budgets:'💰 Presupuestos',debts:'💳 Deudas',goals:'🎯 Metas',recurring:'🔄 Recurrentes',accounts:'🏦 Cuentas',currency:'💱 Divisas',reports:'📈 Reportes',distpct:'📐 Distribución %',advisor:'🤖 Asesor IA',calendar:'📆 Calendario',achievements:'🏆 Logros',simulator:'🧮 Simulador',split:'✂️ Split',settings:'⚙️ Ajustes'};
 function goTo(sec){
   document.querySelectorAll('.sec').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('.ni').forEach(n=>n.classList.remove('active'));
@@ -1146,6 +1191,7 @@ function goTo(sec){
   if(sec==='currency'){setTimeout(()=>{setCurrBase(S.preferredCurrency||'COP');convCur()},100)}
   if(sec==='calendar')renderCal();
   if(sec==='reports')renderReports();
+  if(sec==='distpct')renderDistPct();
 }
 // Sidebar nav clicks
 document.getElementById('sb-nav').querySelectorAll('.ni[data-sec]').forEach(n=>{
@@ -2208,6 +2254,162 @@ function renderReports(){
       <div class="sbp">${te>0?Math.round((val/te)*100):0}%</div>
     </div>`).join('')||'<div class="cm" style="font-size:.83rem">Sin datos</div>';
 }
+
+// ── DISTRIBUCIÓN POR % (50/30/20 y variantes, editable) ──
+const DP_TEMPLATES={
+  '503020':{label:'50/30/20 estándar',pcts:{nec:50,des:30,aho:20}},
+  '702010':{label:'70/20/10 alta deuda',pcts:{nec:70,des:20,aho:10}},
+  '602020':{label:'60/20/20 costo de vida alto',pcts:{nec:60,des:20,aho:20}},
+  'custom':{label:'Personalizado',pcts:{nec:50,des:30,aho:20}}
+};
+let dpTemplate=S.dpTemplate||'503020';
+let dpPcts={...DP_TEMPLATES[dpTemplate].pcts,...(S.dpPcts||{})};
+
+function dpMonthIncome(){
+  return D.transactions.filter(t=>t.type==='income'&&mk(t.date)===cm()&&t.category!=='🔀 Transferencia').reduce((s,t)=>s+(t.amount||0),0);
+}
+
+function dpUseIncome(){
+  const mi=dpMonthIncome();
+  document.getElementById('dp-amount').value=mi||'';
+  renderDistPctResult();
+  if(!mi)toast('No tienes ingresos registrados este mes todavía','w');
+}
+
+function renderDistPct(){
+  const amtInp=document.getElementById('dp-amount');
+  if(!amtInp.value){const mi=dpMonthIncome();if(mi)amtInp.value=mi}
+  dpRenderTplButtons();
+  dpRenderSliders();
+  renderDistPctResult();
+}
+
+function dpRenderTplButtons(){
+  document.querySelectorAll('.dp-tpl-btn').forEach(b=>{
+    b.classList.toggle('bp',b.dataset.tpl===dpTemplate);
+    b.classList.toggle('bs',b.dataset.tpl!==dpTemplate);
+  });
+}
+
+function dpSetTemplate(tpl){
+  dpTemplate=tpl;
+  if(tpl!=='custom')dpPcts={...DP_TEMPLATES[tpl].pcts};
+  S.dpTemplate=tpl;S.dpPcts=dpPcts;fsSaveSetting();
+  dpRenderTplButtons();dpRenderSliders();renderDistPctResult();
+}
+
+function dpRenderSliders(){
+  const isCustom=dpTemplate==='custom';
+  const rows=[
+    {key:'nec',label:'🏠 Necesidades básicas',hint:'vivienda, servicios, mercado, transporte, mínimos de deuda'},
+    {key:'des',label:'🎉 Deseos',hint:'salidas, ropa, streaming, gustos'},
+    {key:'aho',label:'🎯 Ahorro y deudas',hint:'ahorro + pago extra de deudas'}
+  ];
+  document.getElementById('dp-sliders').innerHTML=rows.map(r=>`
+    <div style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+        <div style="font-size:.83rem;font-weight:600">${r.label}</div>
+        <div style="display:flex;align-items:center;gap:4px">
+          <input type="number" min="0" max="100" id="dp-pct-${r.key}" value="${dpPcts[r.key]}" ${isCustom?'':'disabled'} style="width:58px;text-align:right;padding:5px 7px;font-size:.8rem" oninput="dpOnSliderInput('${r.key}')">
+          <span style="font-size:.8rem;color:var(--text2)">%</span>
+        </div>
+      </div>
+      <input type="range" min="0" max="100" id="dp-range-${r.key}" value="${dpPcts[r.key]}" ${isCustom?'':'disabled'} style="width:100%" oninput="dpOnRangeInput('${r.key}')">
+      <div style="font-size:.68rem;color:var(--text2);margin-top:2px">${r.hint}</div>
+    </div>`).join('');
+}
+
+function dpOnRangeInput(key){
+  const v=parseInt(document.getElementById('dp-range-'+key).value)||0;
+  document.getElementById('dp-pct-'+key).value=v;
+  dpPcts[key]=v;
+  dpCommitPcts();
+}
+function dpOnSliderInput(key){
+  let v=parseInt(document.getElementById('dp-pct-'+key).value)||0;
+  v=Math.max(0,Math.min(100,v));
+  document.getElementById('dp-range-'+key).value=v;
+  dpPcts[key]=v;
+  dpCommitPcts();
+}
+function dpCommitPcts(){
+  S.dpPcts=dpPcts;fsSaveSetting();
+  renderDistPctResult();
+}
+
+function renderDistPctResult(){
+  const c=cur();
+  const amount=parseFloat(document.getElementById('dp-amount').value)||0;
+  const sum=(dpPcts.nec||0)+(dpPcts.des||0)+(dpPcts.aho||0);
+  const warn=document.getElementById('dp-sum-warning');
+  if(sum!==100){warn.style.display='block';document.getElementById('dp-sum-val').textContent=sum}
+  else warn.style.display='none';
+
+  const valNec=amount*(dpPcts.nec||0)/100;
+  const valDes=amount*(dpPcts.des||0)/100;
+  const valAho=amount*(dpPcts.aho||0)/100;
+
+  document.getElementById('dp-breakdown').innerHTML=`
+    <div class="card" style="text-align:center">
+      <div class="ctitle">🏠 Necesidades (${dpPcts.nec||0}%)</div>
+      <div style="font-size:1.2rem;font-weight:800">${fmt(valNec,c)}</div>
+    </div>
+    <div class="card" style="text-align:center">
+      <div class="ctitle">🎉 Deseos (${dpPcts.des||0}%)</div>
+      <div style="font-size:1.2rem;font-weight:800">${fmt(valDes,c)}</div>
+    </div>
+    <div class="card" style="text-align:center;border-color:rgba(var(--accent-rgb),.3)">
+      <div class="ctitle">🎯 Ahorro y deudas (${dpPcts.aho||0}%)</div>
+      <div style="font-size:1.2rem;font-weight:800;color:var(--accent3)">${fmt(valAho,c)}</div>
+    </div>`;
+
+  // Capacidad de pago — mismos umbrales que Reportes (personal: verde<30%, amarillo 30-40%, rojo>40%)
+  const mp=D.debts.reduce((s,d)=>s+(d.monthlyPayment||0),0);
+  const mi=dpMonthIncome()||amount;
+  const pr=mi>0?Math.round((mp/mi)*100):0;
+  const td=D.debts.reduce((s,d)=>s+(d.remaining||0),0);
+  let verdict,color,badgeClass;
+  if(pr<30){verdict='Tu carga de deuda actual es saludable. Hay espacio para un nuevo compromiso si cabe dentro de tu % de Ahorro y deudas.';color='var(--green)';badgeClass='bi'}
+  else if(pr<40){verdict='Estás en zona de precaución. Un nuevo compromiso es riesgoso — evalúa si cabe sin sacrificar tus deudas actuales.';color='var(--yellow)';badgeClass='by'}
+  else{verdict='Tu carga de deuda ya supera el umbral recomendado (>40% del ingreso). No es recomendable asumir un nuevo compromiso por ahora — prioriza reducir deuda existente.';color='var(--red)';badgeClass='be'}
+  document.getElementById('dp-capacity').innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px">
+      <div style="font-size:.83rem;font-weight:600">Cuotas de deuda / ingreso mensual</div>
+      <span class="badge ${badgeClass}">${pr}%</span>
+    </div>
+    <div class="pw" style="margin-bottom:10px"><div class="pb" style="width:${Math.min(pr,100)}%;background:${color}"></div></div>
+    <div style="font-size:.82rem;line-height:1.5">${verdict}</div>
+    <div style="font-size:.7rem;color:var(--text2);margin-top:8px">Deuda total actual: ${fmt(td,c)} · Cuotas mensuales: ${fmt(mp,c)}/mes</div>`;
+}
+
+function openDistPctExecModal(){
+  const c=cur();
+  const amount=parseFloat(document.getElementById('dp-amount').value)||0;
+  const sum=(dpPcts.nec||0)+(dpPcts.des||0)+(dpPcts.aho||0);
+  if(sum!==100){toast('Ajusta los porcentajes para que sumen 100% antes de continuar','e');return}
+  const valAho=amount*(dpPcts.aho||0)/100;
+  if(!valAho){toast('El monto de Ahorro y deudas es 0 — no hay nada que separar','w');return}
+  if(!D.accounts.length){toast('Crea primero una cuenta para poder separar el dinero','e');return}
+  openDistModal();
+  document.getElementById('dist-from-pct-banner').style.display='block';
+  // Sugerir el monto en el primer destino activo disponible (meta > deuda > recurrente), editable por el usuario
+  setTimeout(()=>{
+    const goalInp=document.querySelector('.dist-goal');
+    const debtInp=document.querySelector('.dist-debt');
+    const recInp=document.querySelector('.dist-rec');
+    const target=goalInp||debtInp||recInp;
+    if(target){
+      target.value=Math.round(valAho);
+      toast(`Sugerido ${fmt(valAho,c)} para "Ahorro y deudas" — ajusta cómo repartirlo`,'w');
+    }else{
+      toast('No tienes metas, deudas ni recurrentes activos para asignar este monto. Créalos primero.','w');
+    }
+  },50);
+}
+// Limpia el banner al cerrar el modal de distribuir, sin importar cómo se abrió
+document.querySelectorAll('[data-close="mod-dist"]').forEach(btn=>{
+  btn.addEventListener('click',()=>{document.getElementById('dist-from-pct-banner').style.display='none'});
+});
 
 // ── AI ADVISOR ──
 async function sendChat(){
